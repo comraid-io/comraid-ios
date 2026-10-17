@@ -1,0 +1,12 @@
+{
+  "": {
+    "swift-dependencies": "/Users/kitchen/Desktop/comraid/comraid-Ios/.build/arm64-apple-macosx/debug/ComraidTests.build/primary.swiftdeps"
+  },
+  "/Users/kitchen/Desktop/comraid/comraid-Ios/Tests/ComraidTests/ComraidModelsTests.swift": {
+    "dependencies": "/Users/kitchen/Desktop/comraid/comraid-Ios/.build/arm64-apple-macosx/debug/ComraidTests.build/ComraidModelsTests.d",
+    "object": "/Users/kitchen/Desktop/comraid/comraid-Ios/.build/arm64-apple-macosx/debug/ComraidTests.build/ComraidModelsTests.swift.o",
+    "swiftmodule": "/Users/kitchen/Desktop/comraid/comraid-Ios/.build/arm64-apple-macosx/debug/ComraidTests.build/ComraidModelsTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/kitchen/Desktop/comraid/comraid-Ios/.build/arm64-apple-macosx/debug/ComraidTests.build/ComraidModelsTests.swiftdeps",
+    "diagnostics": "/Users/kitchen/Desktop/comraid/comraid-Ios/.build/arm64-apple-macosx/debug/ComraidTests.build/ComraidModelsTests.dia"
+  }
+}

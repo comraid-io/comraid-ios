@@ -1,0 +1,3 @@
+module Comraid {
+    header "/Users/kitchen/Desktop/comraid/comraid-Ios/.build/arm64-apple-macosx/debug/Comraid.build/include/Comraid-Swift.h"
+}
