@@ -1,6 +1,6 @@
 # Comraid Apple SDK
 
-Swift Package for local notification schedules/timers and the ComRaid mobile identity loop (Subscription register, Login, Logout, Contact-level push opt-in/out).
+Swift Package for local notification schedules/timers and the ComRaid mobile identity loop (**Subscription** register, **Login**, **Logout**, Contact-level push opt-in/out). Vocabulary: **Endpoint** / **Subscription**, `external_user_id`, Identity verification **JWT** (`login(externalUserId:jwt:)`). Server-side sends use **Message** / **Notification**, **Campaign**, **Single send**, **Broadcast**, and **Multi-send** (see Node SDK / docs).
 
 ## Setup
 
