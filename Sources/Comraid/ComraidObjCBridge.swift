@@ -7,15 +7,110 @@ public final class ComraidObjCBridge: NSObject, @unchecked Sendable {
   private override init() {}
 
   @objc public func configure(
+    appId: String,
+    apiBaseURL: String?,
+    apnsEnvironment: String,
     storageSuiteName: String?,
     completion: @escaping @Sendable (NSError?) -> Void
   ) {
     let configuredSuite = storageSuiteName?.isEmpty == false
       ? storageSuiteName
       : Bundle.main.object(forInfoDictionaryKey: "ComraidStorageSuiteName") as? String
+    let env: APNsEnvironment
+    switch apnsEnvironment {
+    case "sandbox": env = .sandbox
+    case "production": env = .production
+    default:
+      completion(NSError(
+        domain: "Comraid",
+        code: 1004,
+        userInfo: [NSLocalizedDescriptionKey: "apnsEnvironment must be sandbox or production"]
+      ))
+      return
+    }
+    let baseURL = apiBaseURL.flatMap { URL(string: $0) } ?? URL(string: "https://api.comraid.io")!
     Task {
-      await Comraid.shared.configure(.init(storageSuiteName: configuredSuite))
+      await Comraid.shared.configure(
+        .init(
+          appId: appId,
+          apiBaseURL: baseURL,
+          apnsEnvironment: env,
+          storageSuiteName: configuredSuite
+        )
+      )
       completion(nil)
+    }
+  }
+
+  @objc public func setAPNsDeviceToken(
+    _ tokenData: Data,
+    completion: @escaping @Sendable (NSError?) -> Void
+  ) {
+    Task {
+      await Comraid.shared.setAPNsDeviceToken(tokenData)
+      completion(nil)
+    }
+  }
+
+  @objc public func register(completion: @escaping @Sendable (NSError?) -> Void) {
+    Task {
+      do {
+        try await Comraid.shared.register()
+        completion(nil)
+      } catch {
+        completion(error as NSError)
+      }
+    }
+  }
+
+  @objc public func login(
+    externalUserId: String,
+    identityToken: String?,
+    completion: @escaping @Sendable (NSError?) -> Void
+  ) {
+    Task {
+      do {
+        try await Comraid.shared.login(
+          externalUserId: externalUserId,
+          identityToken: identityToken?.isEmpty == false ? identityToken : nil
+        )
+        completion(nil)
+      } catch {
+        completion(error as NSError)
+      }
+    }
+  }
+
+  @objc public func logout(completion: @escaping @Sendable (NSError?) -> Void) {
+    Task {
+      do {
+        try await Comraid.shared.logout()
+        completion(nil)
+      } catch {
+        completion(error as NSError)
+      }
+    }
+  }
+
+  @objc public func optOut(completion: @escaping @Sendable (NSError?) -> Void) {
+    Task {
+      do {
+        try await Comraid.shared.optOut()
+        completion(nil)
+      } catch {
+        completion(error as NSError)
+      }
+    }
+  }
+
+  @objc public func optIn(completion: @escaping @Sendable (NSError?) -> Void) {
+    Task {
+      do {
+        try await Comraid.shared.optIn()
+        completion(nil)
+      } catch {
+        completion(error as NSError)
+      }
     }
   }
 
@@ -38,7 +133,7 @@ public final class ComraidObjCBridge: NSObject, @unchecked Sendable {
   ) {
     Task {
       do {
-        completion(try await Comraid.shared.requestAuthorization(), nil)
+        completion(try await Comraid.shared.requestPermission(), nil)
       } catch {
         completion(false, error as NSError)
       }

@@ -1,9 +1,28 @@
 import Foundation
 
+public enum APNsEnvironment: String, Sendable, Equatable {
+  case sandbox
+  case production
+}
+
 public struct ComraidConfiguration: Sendable, Equatable {
+  /// Publishable App ID (`cr_app_…`). Required for mobile API authentication.
+  public var appId: String
+  /// API base URL. Defaults to the hosted ComRaid API.
+  public var apiBaseURL: URL
+  /// Required for APNs Subscription register / token replace.
+  public var apnsEnvironment: APNsEnvironment
   public var storageSuiteName: String?
 
-  public init(storageSuiteName: String? = nil) {
+  public init(
+    appId: String,
+    apiBaseURL: URL = URL(string: "https://api.comraid.io")!,
+    apnsEnvironment: APNsEnvironment,
+    storageSuiteName: String? = nil
+  ) {
+    self.appId = appId
+    self.apiBaseURL = apiBaseURL
+    self.apnsEnvironment = apnsEnvironment
     self.storageSuiteName = storageSuiteName
   }
 }
@@ -91,9 +110,11 @@ public struct ComraidTimer: Codable, Sendable, Equatable {
 
 public enum ComraidError: Error, Sendable, Equatable {
   case notConfigured
+  case notReady
   case invalidIdentifier
   case triggerMustBeInFuture
   case timerNotFound
   case timerNotPaused
   case persistenceFailed
+  case apiError(String)
 }

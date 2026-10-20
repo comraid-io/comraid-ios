@@ -1,23 +1,159 @@
 import Foundation
 import UserNotifications
+#if canImport(UIKit)
+import UIKit
+#endif
 
 public actor Comraid {
   public static let shared = Comraid()
 
   private var store: ComraidStore?
-  private let notificationCenter: UNUserNotificationCenter
+  private var configuration: ComraidConfiguration?
+  private var api: MobileApiClient?
+  private var subscriptionStore: (any SubscriptionCredentialStore)?
+  private var tokenProvider: (any TokenProvider)?
+  private var apnsTokenProvider: StoredAPNsTokenProvider?
+  /// Nil until first use so unit tests that only exercise the identity HTTP seam
+  /// never touch `UNUserNotificationCenter.current()` (crashes under SwiftPM's helper).
+  private var injectedNotificationCenter: UNUserNotificationCenter?
 
-  public init(notificationCenter: UNUserNotificationCenter = .current()) {
-    self.notificationCenter = notificationCenter
+  public init(notificationCenter: UNUserNotificationCenter? = nil) {
+    self.injectedNotificationCenter = notificationCenter
   }
 
-  public func configure(_ configuration: ComraidConfiguration = .init()) {
+  private var notificationCenter: UNUserNotificationCenter {
+    if let injectedNotificationCenter { return injectedNotificationCenter }
+    let center = UNUserNotificationCenter.current()
+    injectedNotificationCenter = center
+    return center
+  }
+
+  public func configure(_ configuration: ComraidConfiguration) {
+    precondition(!configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "appId is required (cr_app_…)")
+    self.configuration = configuration
     store = ComraidStore(suiteName: configuration.storageSuiteName)
+    let credentials = KeychainSubscriptionStore(suiteName: configuration.storageSuiteName)
+    subscriptionStore = credentials
+    let apns = StoredAPNsTokenProvider()
+    apnsTokenProvider = apns
+    tokenProvider = apns
+    api = MobileApiClient(
+      appId: configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines),
+      apnsEnvironment: configuration.apnsEnvironment,
+      transport: URLSessionHttpTransport(apiBaseURL: configuration.apiBaseURL)
+    )
+  }
+
+  /// Test seam: injectable HTTP transport, token provider, and subscription store.
+  func configureForTests(
+    _ configuration: ComraidConfiguration,
+    transport: any HttpTransport,
+    tokenProvider: any TokenProvider,
+    subscriptionStore: any SubscriptionCredentialStore
+  ) {
+    precondition(!configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "appId is required (cr_app_…)")
+    self.configuration = configuration
+    store = ComraidStore(suiteName: configuration.storageSuiteName)
+    self.subscriptionStore = subscriptionStore
+    self.tokenProvider = tokenProvider
+    apnsTokenProvider = nil
+    api = MobileApiClient(
+      appId: configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines),
+      apnsEnvironment: configuration.apnsEnvironment,
+      transport: transport
+    )
+  }
+
+  func resetForTests() {
+    configuration = nil
+    store = nil
+    api = nil
+    subscriptionStore = nil
+    tokenProvider = nil
+    apnsTokenProvider = nil
+  }
+
+  /// Forward the APNs device token from `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`.
+  public func setAPNsDeviceToken(_ tokenData: Data) async {
+    await apnsTokenProvider?.setDeviceToken(tokenData)
+  }
+
+  /**
+   Requests notification permission. When granted, asks the system for a remote notification token.
+   Call `setAPNsDeviceToken` from AppDelegate, then `register()`.
+   */
+  @discardableResult
+  public func requestPermission(options: UNAuthorizationOptions = [.alert, .badge, .sound]) async throws -> Bool {
+    _ = try requireConfigured()
+    let granted = try await notificationCenter.requestAuthorization(options: options)
+    if granted {
+      #if canImport(UIKit) && !os(watchOS)
+      await MainActor.run {
+        UIApplication.shared.registerForRemoteNotifications()
+      }
+      #endif
+    }
+    return granted
   }
 
   @discardableResult
   public func requestAuthorization(options: UNAuthorizationOptions = [.alert, .badge, .sound]) async throws -> Bool {
-    try await notificationCenter.requestAuthorization(options: options)
+    try await requestPermission(options: options)
+  }
+
+  /// Fetches the APNs token via TokenProvider and registers a Subscription.
+  public func register() async throws {
+    let api = try requireAPI()
+    let tokens = try requireTokenProvider()
+    let store = try requireSubscriptionStore()
+    let token = try await tokens.currentToken()
+    let result = try await api.register(token: token)
+    store.save(subscriptionId: result.subscriptionId, credential: result.credential)
+  }
+
+  /// Token rotation: replace-token when credential exists, else full register.
+  public func onPushTokenRefresh() async throws {
+    let api = try requireAPI()
+    let tokens = try requireTokenProvider()
+    let store = try requireSubscriptionStore()
+    let token = try await tokens.currentToken()
+    if let subscriptionId = store.subscriptionId, let credential = store.credential {
+      try await api.replaceToken(subscriptionId: subscriptionId, credential: credential, token: token)
+    } else {
+      let result = try await api.register(token: token)
+      store.save(subscriptionId: result.subscriptionId, credential: result.credential)
+    }
+  }
+
+  public func login(externalUserId: String, identityToken: String? = nil) async throws {
+    let api = try requireAPI()
+    let (subscriptionId, credential) = try requireSubscription()
+    let trimmed = externalUserId.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { throw ComraidError.invalidIdentifier }
+    try await api.login(
+      subscriptionId: subscriptionId,
+      credential: credential,
+      externalUserId: trimmed,
+      identityToken: identityToken
+    )
+  }
+
+  public func logout() async throws {
+    let api = try requireAPI()
+    let (subscriptionId, credential) = try requireSubscription()
+    try await api.logout(subscriptionId: subscriptionId, credential: credential)
+  }
+
+  public func optOut() async throws {
+    let api = try requireAPI()
+    let (subscriptionId, credential) = try requireSubscription()
+    try await api.optOut(subscriptionId: subscriptionId, credential: credential, channel: "push")
+  }
+
+  public func optIn() async throws {
+    let api = try requireAPI()
+    let (subscriptionId, credential) = try requireSubscription()
+    try await api.optIn(subscriptionId: subscriptionId, credential: credential, channel: "push")
   }
 
   public func capabilities() async -> ComraidCapabilities {
@@ -173,5 +309,34 @@ public actor Comraid {
   private func configuredStore() throws -> ComraidStore {
     guard let store else { throw ComraidError.notConfigured }
     return store
+  }
+
+  private func requireConfigured() throws -> ComraidConfiguration {
+    guard let configuration else { throw ComraidError.notConfigured }
+    return configuration
+  }
+
+  private func requireAPI() throws -> MobileApiClient {
+    guard let api else { throw ComraidError.notConfigured }
+    return api
+  }
+
+  private func requireTokenProvider() throws -> any TokenProvider {
+    guard let tokenProvider else { throw ComraidError.notConfigured }
+    return tokenProvider
+  }
+
+  private func requireSubscriptionStore() throws -> any SubscriptionCredentialStore {
+    guard let subscriptionStore else { throw ComraidError.notConfigured }
+    return subscriptionStore
+  }
+
+  private func requireSubscription() throws -> (String, String) {
+    let store = try requireSubscriptionStore()
+    guard let subscriptionId = store.subscriptionId, !subscriptionId.isEmpty,
+          let credential = store.credential, !credential.isEmpty else {
+      throw ComraidError.notReady
+    }
+    return (subscriptionId, credential)
   }
 }
