@@ -125,7 +125,7 @@ public actor Comraid {
     }
   }
 
-  public func login(externalUserId: String, identityToken: String? = nil) async throws {
+  public func login(externalUserId: String, jwt: String? = nil) async throws {
     let api = try requireAPI()
     let (subscriptionId, credential) = try requireSubscription()
     let trimmed = externalUserId.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -134,7 +134,7 @@ public actor Comraid {
       subscriptionId: subscriptionId,
       credential: credential,
       externalUserId: trimmed,
-      identityToken: identityToken
+      jwt: jwt
     )
   }
 

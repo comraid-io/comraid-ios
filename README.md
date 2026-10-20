@@ -38,7 +38,7 @@ func application(
 }
 
 try await Comraid.shared.login(externalUserId: "user_123")
-try await Comraid.shared.login(externalUserId: "user_123", identityToken: jwtFromYourBackend)
+try await Comraid.shared.login(externalUserId: "user_123", jwt: jwtFromYourBackend)
 
 try await Comraid.shared.logout()
 

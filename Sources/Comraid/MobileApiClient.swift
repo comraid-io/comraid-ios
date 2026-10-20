@@ -36,14 +36,14 @@ struct MobileApiClient: Sendable {
     subscriptionId: String,
     credential: String,
     externalUserId: String,
-    identityToken: String?
+    jwt: String?
   ) async throws {
     var payload: [String: Any] = [
       "external_user_id": externalUserId,
       "subscription_credential": credential,
     ]
-    if let identityToken {
-      payload["identity_token"] = identityToken
+    if let jwt {
+      payload["jwt"] = jwt
     }
     let response = try await post(path: "/mobile/subscriptions/\(subscriptionId)/login", payload: payload)
     try requireSuccess(response, expected: [200])

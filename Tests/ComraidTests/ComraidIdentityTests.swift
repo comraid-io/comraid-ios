@@ -22,7 +22,7 @@ import Testing
   #expect(body["external_id"] == nil)
 }
 
-@Test func loginIncludesOptionalIdentityToken() async throws {
+@Test func loginIncludesOptionalJWT() async throws {
   let harness = try await IdentityHarness.make()
   harness.store.save(subscriptionId: "sub-1", credential: "cred-1")
   harness.transport.nextResponse = HttpResponse(
@@ -30,10 +30,10 @@ import Testing
     body: Data(#"{"subscription_id":"sub-1","contact_id":"c-1","external_user_id":"user_123","anonymous":false,"verified":true}"#.utf8)
   )
 
-  try await harness.comraid.login(externalUserId: "user_123", identityToken: "jwt-token")
+  try await harness.comraid.login(externalUserId: "user_123", jwt: "jwt-from-backend")
 
   let body = try JSONSerialization.jsonObject(with: #require(harness.transport.requests.first?.body)) as! [String: Any]
-  #expect(body["identity_token"] as? String == "jwt-token")
+  #expect(body["jwt"] as? String == "jwt-from-backend")
 }
 
 @Test func logoutPostsAndKeepsCredential() async throws {

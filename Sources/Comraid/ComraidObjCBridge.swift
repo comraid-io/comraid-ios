@@ -65,14 +65,14 @@ public final class ComraidObjCBridge: NSObject, @unchecked Sendable {
 
   @objc public func login(
     externalUserId: String,
-    identityToken: String?,
+    jwt: String?,
     completion: @escaping @Sendable (NSError?) -> Void
   ) {
     Task {
       do {
         try await Comraid.shared.login(
           externalUserId: externalUserId,
-          identityToken: identityToken?.isEmpty == false ? identityToken : nil
+          jwt: jwt?.isEmpty == false ? jwt : nil
         )
         completion(nil)
       } catch {
