@@ -13,6 +13,9 @@ public actor ComRaid {
   private var subscriptionStore: (any SubscriptionCredentialStore)?
   private var tokenProvider: (any TokenProvider)?
   private var apnsTokenProvider: StoredAPNsTokenProvider?
+  private var ackQueue: AckQueue?
+  private var deviceProperties: DeviceProperties?
+  private var externalUserId: String?
   /// Nil until first use so unit tests that only exercise the identity HTTP seam
   /// never touch `UNUserNotificationCenter.current()` (crashes under SwiftPM's helper).
   private var injectedNotificationCenter: UNUserNotificationCenter?
@@ -37,19 +40,31 @@ public actor ComRaid {
     let apns = StoredAPNsTokenProvider()
     apnsTokenProvider = apns
     tokenProvider = apns
+    let transport = URLSessionHttpTransport(apiBaseURL: configuration.apiBaseURL)
     api = MobileApiClient(
       appId: configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines),
       apnsEnvironment: configuration.apnsEnvironment,
-      transport: URLSessionHttpTransport(apiBaseURL: configuration.apiBaseURL)
+      transport: transport
     )
+    let queue = AckQueue(
+      apiBaseURL: configuration.apiBaseURL,
+      store: UserDefaultsAckQueueStore(suiteName: configuration.storageSuiteName),
+      transport: transport
+    )
+    ackQueue = queue
+    deviceProperties = nil
+    externalUserId = nil
+    SdkConfigStore(suiteName: configuration.storageSuiteName).save(configuration)
+    Task { await queue.flush() }
   }
 
-  /// Test seam: injectable HTTP transport, token provider, and subscription store.
+  /// Test seam: injectable HTTP transport, token provider, subscription store, and ACK store.
   func configureForTests(
     _ configuration: ComRaidConfiguration,
     transport: any HttpTransport,
     tokenProvider: any TokenProvider,
-    subscriptionStore: any SubscriptionCredentialStore
+    subscriptionStore: any SubscriptionCredentialStore,
+    ackQueueStore: (any AckQueueStore)? = nil
   ) {
     precondition(!configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "appId is required (cr_app_…)")
     self.configuration = configuration
@@ -62,6 +77,13 @@ public actor ComRaid {
       apnsEnvironment: configuration.apnsEnvironment,
       transport: transport
     )
+    ackQueue = AckQueue(
+      apiBaseURL: configuration.apiBaseURL,
+      store: ackQueueStore ?? InMemoryAckQueueStoreForTests(),
+      transport: transport
+    )
+    deviceProperties = nil
+    externalUserId = nil
   }
 
   func resetForTests() {
@@ -71,6 +93,9 @@ public actor ComRaid {
     subscriptionStore = nil
     tokenProvider = nil
     apnsTokenProvider = nil
+    ackQueue = nil
+    deviceProperties = nil
+    externalUserId = nil
   }
 
   /// Forward the APNs device token from `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`.
@@ -107,7 +132,7 @@ public actor ComRaid {
     let tokens = try requireTokenProvider()
     let store = try requireSubscriptionStore()
     let token = try await tokens.currentToken()
-    let result = try await api.register(token: token)
+    let result = try await api.register(token: token, properties: deviceProperties)
     store.save(subscriptionId: result.subscriptionId, credential: result.credential)
   }
 
@@ -118,9 +143,14 @@ public actor ComRaid {
     let store = try requireSubscriptionStore()
     let token = try await tokens.currentToken()
     if let subscriptionId = store.subscriptionId, let credential = store.credential {
-      try await api.replaceToken(subscriptionId: subscriptionId, credential: credential, token: token)
+      try await api.replaceToken(
+        subscriptionId: subscriptionId,
+        credential: credential,
+        token: token,
+        properties: deviceProperties
+      )
     } else {
-      let result = try await api.register(token: token)
+      let result = try await api.register(token: token, properties: deviceProperties)
       store.save(subscriptionId: result.subscriptionId, credential: result.credential)
     }
   }
@@ -136,12 +166,114 @@ public actor ComRaid {
       externalUserId: trimmed,
       jwt: jwt
     )
+    self.externalUserId = trimmed
   }
 
   public func logout() async throws {
     let api = try requireAPI()
     let (subscriptionId, credential) = try requireSubscription()
     try await api.logout(subscriptionId: subscriptionId, credential: credential)
+    externalUserId = nil
+  }
+
+  /// Persist Subscription device Properties for the next register / token refresh.
+  public func setDeviceProperties(_ properties: DeviceProperties) {
+    _ = try? requireConfigured()
+    deviceProperties = properties
+  }
+
+  /**
+   Upsert Contact Attributes for the logged-in External user ID
+   (`PUT /contacts/{external_user_id}/attributes`).
+   */
+  public func setAttributes(_ attributes: sending [String: Any]) async throws {
+    let api = try requireAPI()
+    guard let externalUserId, !externalUserId.isEmpty else { throw ComRaidError.notReady }
+    guard !attributes.isEmpty else { throw ComRaidError.invalidIdentifier }
+    try await api.upsertAttributes(externalUserId: externalUserId, attributes: attributes)
+  }
+
+  /// Enqueue + flush a delivered ACK. Returns false when ids are blank.
+  @discardableResult
+  public func acknowledgeDelivered(deliveryId: String, attributionToken: String) async -> Bool {
+    guard let ackQueue else { return false }
+    let trimmedId = deliveryId.trimmingCharacters(in: .whitespacesAndNewlines)
+    let trimmedToken = attributionToken.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedId.isEmpty, !trimmedToken.isEmpty else { return false }
+    _ = await ackQueue.enqueueFromPayload(
+      kind: .delivered,
+      data: [
+        "cr_delivery_id": trimmedId,
+        "cr_attribution_token": trimmedToken,
+      ]
+    )
+    await ackQueue.flush()
+    return true
+  }
+
+  /// Enqueue + flush an opened ACK (optional action button id).
+  @discardableResult
+  public func acknowledgeOpened(
+    deliveryId: String,
+    attributionToken: String,
+    actionId: String? = nil
+  ) async -> Bool {
+    guard let ackQueue else { return false }
+    let trimmedId = deliveryId.trimmingCharacters(in: .whitespacesAndNewlines)
+    let trimmedToken = attributionToken.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedId.isEmpty, !trimmedToken.isEmpty else { return false }
+    _ = await ackQueue.enqueueFromPayload(
+      kind: .opened,
+      data: [
+        "cr_delivery_id": trimmedId,
+        "cr_attribution_token": trimmedToken,
+      ],
+      actionId: actionId
+    )
+    await ackQueue.flush()
+    return true
+  }
+
+  /// Flush any durable ACK backlog (safe to call from app launch).
+  public func flushAcks() async {
+    await ackQueue?.flush()
+  }
+
+  /**
+   Process a remote notification payload: register action categories, enqueue delivered ACK.
+   Call from `UNUserNotificationCenterDelegate` / AppDelegate when a push arrives.
+   */
+  public func handleRemoteNotification(userInfo: [AnyHashable: Any]) async {
+    let data = PushPayload.fromUserInfo(userInfo)
+    await RemoteNotificationDisplay.registerCategories(from: data)
+    if let ackQueue {
+      _ = await ackQueue.enqueueFromPayload(kind: .delivered, data: data)
+      await ackQueue.flush()
+    } else {
+      await BackgroundAckHelpers.handleReceived(data: data)
+    }
+  }
+
+  /**
+   Process a notification response (tap / action). Enqueues opened ACK.
+   Call from `userNotificationCenter(_:didReceive:withCompletionHandler:)`.
+   */
+  public func handleNotificationResponse(_ response: UNNotificationResponse) async {
+    let data = PushPayload.fromUserInfo(response.notification.request.content.userInfo)
+    let actionId: String? = {
+      switch response.actionIdentifier {
+      case UNNotificationDefaultActionIdentifier, UNNotificationDismissActionIdentifier:
+        return nil
+      default:
+        return response.actionIdentifier
+      }
+    }()
+    if let ackQueue {
+      _ = await ackQueue.enqueueFromPayload(kind: .opened, data: data, actionId: actionId)
+      await ackQueue.flush()
+    } else {
+      await BackgroundAckHelpers.handleOpened(data: data, actionId: actionId)
+    }
   }
 
   public func optOut() async throws {
@@ -338,5 +470,18 @@ public actor ComRaid {
       throw ComRaidError.notReady
     }
     return (subscriptionId, credential)
+  }
+}
+
+private final class InMemoryAckQueueStoreForTests: AckQueueStore, @unchecked Sendable {
+  private let lock = NSLock()
+  private var map: [String: String] = [:]
+
+  func get(_ key: String) -> String? {
+    lock.withLock { map[key] }
+  }
+
+  func set(_ key: String, value: String) {
+    lock.withLock { map[key] = value }
   }
 }

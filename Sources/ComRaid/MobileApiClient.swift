@@ -5,13 +5,17 @@ struct MobileApiClient: Sendable {
   let apnsEnvironment: APNsEnvironment
   let transport: any HttpTransport
 
-  func register(token: String) async throws -> (subscriptionId: String, credential: String?) {
-    let payload: [String: Any] = [
+  func register(
+    token: String,
+    properties: DeviceProperties?
+  ) async throws -> (subscriptionId: String, credential: String?) {
+    var payload: [String: Any] = [
       "platform": "ios",
       "token": token,
       "provider": "apns",
       "apns_environment": apnsEnvironment.rawValue,
     ]
+    putDeviceFields(&payload, properties)
     let response = try await post(path: "/mobile/subscriptions", payload: payload)
     try requireSuccess(response, expected: [200, 201])
     let json = try jsonObject(response.body)
@@ -20,14 +24,20 @@ struct MobileApiClient: Sendable {
     return (subscriptionId, credential)
   }
 
-  func replaceToken(subscriptionId: String, credential: String, token: String) async throws {
-    let payload: [String: Any] = [
+  func replaceToken(
+    subscriptionId: String,
+    credential: String,
+    token: String,
+    properties: DeviceProperties?
+  ) async throws {
+    var payload: [String: Any] = [
       "token": token,
       "platform": "ios",
       "provider": "apns",
       "apns_environment": apnsEnvironment.rawValue,
       "subscription_credential": credential,
     ]
+    putDeviceFields(&payload, properties)
     let response = try await post(path: "/mobile/subscriptions/\(subscriptionId)/token", payload: payload)
     try requireSuccess(response, expected: [200])
   }
@@ -73,11 +83,48 @@ struct MobileApiClient: Sendable {
     try requireSuccess(response, expected: [200])
   }
 
+  func upsertAttributes(externalUserId: String, attributes: [String: Any]) async throws {
+    let response = try await put(
+      path: "/contacts/\(externalUserId)/attributes",
+      payload: ["attributes": attributes]
+    )
+    try requireSuccess(response, expected: [200])
+  }
+
+  private func putDeviceFields(_ payload: inout [String: Any], _ properties: DeviceProperties?) {
+    guard let properties else { return }
+    if let appVersion = properties.appVersion?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !appVersion.isEmpty {
+      payload["app_version"] = appVersion
+    }
+    var device: [String: Any] = [:]
+    if let model = properties.model?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty {
+      device["model"] = model
+    }
+    if let osVersion = properties.osVersion?.trimmingCharacters(in: .whitespacesAndNewlines), !osVersion.isEmpty {
+      device["os_version"] = osVersion
+    }
+    for (key, value) in properties.extras {
+      device[key] = value
+    }
+    if !device.isEmpty {
+      payload["device"] = device
+    }
+  }
+
   private func post(path: String, payload: [String: Any]) async throws -> HttpResponse {
+    try await execute(method: "POST", path: path, payload: payload)
+  }
+
+  private func put(path: String, payload: [String: Any]) async throws -> HttpResponse {
+    try await execute(method: "PUT", path: path, payload: payload)
+  }
+
+  private func execute(method: String, path: String, payload: [String: Any]) async throws -> HttpResponse {
     let body = try JSONSerialization.data(withJSONObject: payload)
     return try await transport.execute(
       HttpRequest(
-        method: "POST",
+        method: method,
         path: path,
         headers: ["X-ComRaid-App-Id": appId],
         body: body
