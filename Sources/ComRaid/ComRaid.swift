@@ -4,11 +4,11 @@ import UserNotifications
 import UIKit
 #endif
 
-public actor Comraid {
-  public static let shared = Comraid()
+public actor ComRaid {
+  public static let shared = ComRaid()
 
-  private var store: ComraidStore?
-  private var configuration: ComraidConfiguration?
+  private var store: ComRaidStore?
+  private var configuration: ComRaidConfiguration?
   private var api: MobileApiClient?
   private var subscriptionStore: (any SubscriptionCredentialStore)?
   private var tokenProvider: (any TokenProvider)?
@@ -28,10 +28,10 @@ public actor Comraid {
     return center
   }
 
-  public func configure(_ configuration: ComraidConfiguration) {
+  public func configure(_ configuration: ComRaidConfiguration) {
     precondition(!configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "appId is required (cr_app_…)")
     self.configuration = configuration
-    store = ComraidStore(suiteName: configuration.storageSuiteName)
+    store = ComRaidStore(suiteName: configuration.storageSuiteName)
     let credentials = KeychainSubscriptionStore(suiteName: configuration.storageSuiteName)
     subscriptionStore = credentials
     let apns = StoredAPNsTokenProvider()
@@ -46,14 +46,14 @@ public actor Comraid {
 
   /// Test seam: injectable HTTP transport, token provider, and subscription store.
   func configureForTests(
-    _ configuration: ComraidConfiguration,
+    _ configuration: ComRaidConfiguration,
     transport: any HttpTransport,
     tokenProvider: any TokenProvider,
     subscriptionStore: any SubscriptionCredentialStore
   ) {
     precondition(!configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "appId is required (cr_app_…)")
     self.configuration = configuration
-    store = ComraidStore(suiteName: configuration.storageSuiteName)
+    store = ComRaidStore(suiteName: configuration.storageSuiteName)
     self.subscriptionStore = subscriptionStore
     self.tokenProvider = tokenProvider
     apnsTokenProvider = nil
@@ -129,7 +129,7 @@ public actor Comraid {
     let api = try requireAPI()
     let (subscriptionId, credential) = try requireSubscription()
     let trimmed = externalUserId.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { throw ComraidError.invalidIdentifier }
+    guard !trimmed.isEmpty else { throw ComRaidError.invalidIdentifier }
     try await api.login(
       subscriptionId: subscriptionId,
       credential: credential,
@@ -156,9 +156,9 @@ public actor Comraid {
     try await api.optIn(subscriptionId: subscriptionId, credential: credential, channel: "push")
   }
 
-  public func capabilities() async -> ComraidCapabilities {
+  public func capabilities() async -> ComRaidCapabilities {
     let settings = await notificationCenter.notificationSettings()
-    let status: ComraidAuthorizationStatus = switch settings.authorizationStatus {
+    let status: ComRaidAuthorizationStatus = switch settings.authorizationStatus {
     case .notDetermined: .notDetermined
     case .denied: .denied
     case .authorized: .authorized
@@ -167,10 +167,10 @@ public actor Comraid {
     @unknown default: .unknown
     }
     let enabled = settings.alertSetting == .enabled || settings.authorizationStatus == .provisional
-    return ComraidCapabilities(authorizationStatus: status, notificationsEnabled: enabled)
+    return ComRaidCapabilities(authorizationStatus: status, notificationsEnabled: enabled)
   }
 
-  public func schedule(_ request: ComraidScheduleRequest) async throws {
+  public func schedule(_ request: ComRaidScheduleRequest) async throws {
     let currentStore = try configuredStore()
     try validate(request)
     try await addSystemRequest(request)
@@ -182,11 +182,11 @@ public actor Comraid {
       try currentStore.write(state)
     } catch {
       notificationCenter.removePendingNotificationRequests(withIdentifiers: [request.notification.id])
-      throw ComraidError.persistenceFailed
+      throw ComRaidError.persistenceFailed
     }
   }
 
-  public func pendingSchedules() throws -> [ComraidScheduleRequest] {
+  public func pendingSchedules() throws -> [ComRaidScheduleRequest] {
     try configuredStore().read().schedules.filter { $0.triggerDate > Date() }.sorted { $0.triggerDate < $1.triggerDate }
   }
 
@@ -206,15 +206,15 @@ public actor Comraid {
   public func startTimer(
     id: String,
     duration: TimeInterval,
-    notification: ComraidNotification
-  ) async throws -> ComraidTimer {
-    guard duration.isFinite, duration > 0 else { throw ComraidError.triggerMustBeInFuture }
+    notification: ComRaidNotification
+  ) async throws -> ComRaidTimer {
+    guard duration.isFinite, duration > 0 else { throw ComRaidError.triggerMustBeInFuture }
     let targetDate = Date().addingTimeInterval(duration)
     var adjustedNotification = notification
     adjustedNotification.id = id
     try await schedule(.init(notification: adjustedNotification, triggerDate: targetDate))
 
-    let timer = ComraidTimer(
+    let timer = ComRaidTimer(
       id: id,
       notification: adjustedNotification,
       state: .running,
@@ -226,12 +226,12 @@ public actor Comraid {
   }
 
   @discardableResult
-  public func pauseTimer(id: String) throws -> ComraidTimer {
+  public func pauseTimer(id: String) throws -> ComRaidTimer {
     let currentStore = try configuredStore()
     var state = currentStore.read()
-    guard let index = state.timers.firstIndex(where: { $0.id == id }) else { throw ComraidError.timerNotFound }
+    guard let index = state.timers.firstIndex(where: { $0.id == id }) else { throw ComRaidError.timerNotFound }
     var timer = state.timers[index]
-    guard timer.state == .running, let targetDate = timer.targetDate else { throw ComraidError.timerNotPaused }
+    guard timer.state == .running, let targetDate = timer.targetDate else { throw ComRaidError.timerNotPaused }
     timer.remainingDuration = max(0, targetDate.timeIntervalSinceNow)
     timer.targetDate = nil
     timer.state = .paused
@@ -243,11 +243,11 @@ public actor Comraid {
   }
 
   @discardableResult
-  public func resumeTimer(id: String) async throws -> ComraidTimer {
+  public func resumeTimer(id: String) async throws -> ComRaidTimer {
     let currentStore = try configuredStore()
     let state = currentStore.read()
-    guard var timer = state.timers.first(where: { $0.id == id }) else { throw ComraidError.timerNotFound }
-    guard timer.state == .paused else { throw ComraidError.timerNotPaused }
+    guard var timer = state.timers.first(where: { $0.id == id }) else { throw ComRaidError.timerNotFound }
+    guard timer.state == .paused else { throw ComRaidError.timerNotPaused }
     let targetDate = Date().addingTimeInterval(max(timer.remainingDuration, 0.1))
     timer.state = .running
     timer.targetDate = targetDate
@@ -268,11 +268,11 @@ public actor Comraid {
     try currentStore.write(state)
   }
 
-  public func timers() throws -> [ComraidTimer] {
+  public func timers() throws -> [ComRaidTimer] {
     try configuredStore().read().timers
   }
 
-  private func addSystemRequest(_ request: ComraidScheduleRequest) async throws {
+  private func addSystemRequest(_ request: ComRaidScheduleRequest) async throws {
     let content = UNMutableNotificationContent()
     content.title = request.notification.title
     content.body = request.notification.body
@@ -291,7 +291,7 @@ public actor Comraid {
     )
   }
 
-  private func updateTimer(_ timer: ComraidTimer) throws {
+  private func updateTimer(_ timer: ComRaidTimer) throws {
     let currentStore = try configuredStore()
     var state = currentStore.read()
     state.timers.removeAll { $0.id == timer.id }
@@ -299,35 +299,35 @@ public actor Comraid {
     try currentStore.write(state)
   }
 
-  private func validate(_ request: ComraidScheduleRequest) throws {
+  private func validate(_ request: ComRaidScheduleRequest) throws {
     guard !request.notification.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      throw ComraidError.invalidIdentifier
+      throw ComRaidError.invalidIdentifier
     }
-    guard request.triggerDate.timeIntervalSince1970.isFinite, request.triggerDate.timeIntervalSinceNow > 0 else { throw ComraidError.triggerMustBeInFuture }
+    guard request.triggerDate.timeIntervalSince1970.isFinite, request.triggerDate.timeIntervalSinceNow > 0 else { throw ComRaidError.triggerMustBeInFuture }
   }
 
-  private func configuredStore() throws -> ComraidStore {
-    guard let store else { throw ComraidError.notConfigured }
+  private func configuredStore() throws -> ComRaidStore {
+    guard let store else { throw ComRaidError.notConfigured }
     return store
   }
 
-  private func requireConfigured() throws -> ComraidConfiguration {
-    guard let configuration else { throw ComraidError.notConfigured }
+  private func requireConfigured() throws -> ComRaidConfiguration {
+    guard let configuration else { throw ComRaidError.notConfigured }
     return configuration
   }
 
   private func requireAPI() throws -> MobileApiClient {
-    guard let api else { throw ComraidError.notConfigured }
+    guard let api else { throw ComRaidError.notConfigured }
     return api
   }
 
   private func requireTokenProvider() throws -> any TokenProvider {
-    guard let tokenProvider else { throw ComraidError.notConfigured }
+    guard let tokenProvider else { throw ComRaidError.notConfigured }
     return tokenProvider
   }
 
   private func requireSubscriptionStore() throws -> any SubscriptionCredentialStore {
-    guard let subscriptionStore else { throw ComraidError.notConfigured }
+    guard let subscriptionStore else { throw ComRaidError.notConfigured }
     return subscriptionStore
   }
 
@@ -335,7 +335,7 @@ public actor Comraid {
     let store = try requireSubscriptionStore()
     guard let subscriptionId = store.subscriptionId, !subscriptionId.isEmpty,
           let credential = store.credential, !credential.isEmpty else {
-      throw ComraidError.notReady
+      throw ComRaidError.notReady
     }
     return (subscriptionId, credential)
   }

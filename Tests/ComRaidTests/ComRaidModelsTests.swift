@@ -1,20 +1,20 @@
 import Foundation
 import Testing
-@testable import Comraid
+@testable import ComRaid
 
 @Test func notificationRoundTripsThroughJSON() throws {
-  let notification = ComraidNotification(
+  let notification = ComRaidNotification(
     id: "focus-1",
     title: "Focus complete",
     body: "Done",
     userInfo: ["route": "focus/1"]
   )
   let data = try JSONEncoder().encode(notification)
-  #expect(try JSONDecoder().decode(ComraidNotification.self, from: data) == notification)
+  #expect(try JSONDecoder().decode(ComRaidNotification.self, from: data) == notification)
 }
 
 @Test func timerRoundTripsThroughJSON() throws {
-  let timer = ComraidTimer(
+  let timer = ComRaidTimer(
     id: "timer-1",
     notification: .init(id: "timer-1", title: "Timer", body: "Done"),
     state: .paused,
@@ -22,5 +22,5 @@ import Testing
     remainingDuration: 30
   )
   let data = try JSONEncoder().encode(timer)
-  #expect(try JSONDecoder().decode(ComraidTimer.self, from: data) == timer)
+  #expect(try JSONDecoder().decode(ComRaidTimer.self, from: data) == timer)
 }
