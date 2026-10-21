@@ -9,8 +9,6 @@ let package = Package(
   ],
   products: [
     .library(name: "ComRaid", targets: ["ComRaid"]),
-    // Temporary product alias until ticket 04 contract.
-    .library(name: "Comraid", targets: ["ComRaid"]),
   ],
   targets: [
     .target(name: "ComRaid"),

@@ -10,7 +10,6 @@ final class ComRaidStore: @unchecked Sendable {
   private let encoder = JSONEncoder()
   private let decoder = JSONDecoder()
   private let key = "comraid.state.v1"
-  private let legacyKey = "comraide.state.v1"
   private let lock = NSLock()
 
   init(suiteName: String?) {
@@ -19,14 +18,8 @@ final class ComRaidStore: @unchecked Sendable {
 
   func read() -> ComRaidPersistedState {
     lock.withLock {
-      if let data = defaults.data(forKey: key) {
-        return (try? decoder.decode(ComRaidPersistedState.self, from: data)) ?? ComRaidPersistedState()
-      }
-      // One-shot read-fallback from pre-migrate key.
-      guard let legacy = defaults.data(forKey: legacyKey) else { return ComRaidPersistedState() }
-      defaults.set(legacy, forKey: key)
-      defaults.removeObject(forKey: legacyKey)
-      return (try? decoder.decode(ComRaidPersistedState.self, from: legacy)) ?? ComRaidPersistedState()
+      guard let data = defaults.data(forKey: key) else { return ComRaidPersistedState() }
+      return (try? decoder.decode(ComRaidPersistedState.self, from: data)) ?? ComRaidPersistedState()
     }
   }
 
@@ -34,7 +27,6 @@ final class ComRaidStore: @unchecked Sendable {
     try lock.withLock {
       let data = try encoder.encode(state)
       defaults.set(data, forKey: key)
-      defaults.removeObject(forKey: legacyKey)
     }
   }
 }
