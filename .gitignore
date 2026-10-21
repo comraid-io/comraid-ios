@@ -22,3 +22,4 @@ xcuserdata/
 *.swo
 *~
 .DS_Store
+.worktrees/
