@@ -14,7 +14,7 @@ actor StoredAPNsTokenProvider: TokenProvider {
 
   func currentToken() async throws -> String {
     guard let hexToken, !hexToken.isEmpty else {
-      throw ComraidError.notReady
+      throw ComRaidError.notReady
     }
     return hexToken
   }

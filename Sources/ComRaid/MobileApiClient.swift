@@ -90,20 +90,20 @@ struct MobileApiClient: Sendable {
       let message = (try? jsonObject(response.body))
         .flatMap { ($0["error"] as? [String: Any])?["message"] as? String }
         ?? "HTTP \(response.statusCode)"
-      throw ComraidError.apiError(message)
+      throw ComRaidError.apiError(message)
     }
   }
 
   private func jsonObject(_ data: Data) throws -> [String: Any] {
     guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-      throw ComraidError.apiError("Invalid JSON response")
+      throw ComRaidError.apiError("Invalid JSON response")
     }
     return object
   }
 
   private func string(_ json: [String: Any], _ key: String) throws -> String {
     guard let value = json[key] as? String, !value.isEmpty else {
-      throw ComraidError.apiError("Missing \(key) in response")
+      throw ComRaidError.apiError("Missing \(key) in response")
     }
     return value
   }

@@ -1,8 +1,8 @@
 import Foundation
 
 @objc(ComraidBridge)
-public final class ComraidObjCBridge: NSObject, @unchecked Sendable {
-  @objc public static let shared = ComraidObjCBridge()
+public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
+  @objc public static let shared = ComRaidObjCBridge()
 
   private override init() {}
 
@@ -15,14 +15,14 @@ public final class ComraidObjCBridge: NSObject, @unchecked Sendable {
   ) {
     let configuredSuite = storageSuiteName?.isEmpty == false
       ? storageSuiteName
-      : Bundle.main.object(forInfoDictionaryKey: "ComraidStorageSuiteName") as? String
+      : (Bundle.main.object(forInfoDictionaryKey: "ComRaidStorageSuiteName") as? String)
     let env: APNsEnvironment
     switch apnsEnvironment {
     case "sandbox": env = .sandbox
     case "production": env = .production
     default:
       completion(NSError(
-        domain: "Comraid",
+        domain: "ComRaid",
         code: 1004,
         userInfo: [NSLocalizedDescriptionKey: "apnsEnvironment must be sandbox or production"]
       ))
@@ -30,7 +30,7 @@ public final class ComraidObjCBridge: NSObject, @unchecked Sendable {
     }
     let baseURL = apiBaseURL.flatMap { URL(string: $0) } ?? URL(string: "https://api.comraid.io")!
     Task {
-      await Comraid.shared.configure(
+      await ComRaid.shared.configure(
         .init(
           appId: appId,
           apiBaseURL: baseURL,
@@ -47,7 +47,7 @@ public final class ComraidObjCBridge: NSObject, @unchecked Sendable {
     completion: @escaping @Sendable (NSError?) -> Void
   ) {
     Task {
-      await Comraid.shared.setAPNsDeviceToken(tokenData)
+      await ComRaid.shared.setAPNsDeviceToken(tokenData)
       completion(nil)
     }
   }
@@ -55,7 +55,7 @@ public final class ComraidObjCBridge: NSObject, @unchecked Sendable {
   @objc public func register(completion: @escaping @Sendable (NSError?) -> Void) {
     Task {
       do {
-        try await Comraid.shared.register()
+        try await ComRaid.shared.register()
         completion(nil)
       } catch {
         completion(error as NSError)
@@ -70,7 +70,7 @@ public final class ComraidObjCBridge: NSObject, @unchecked Sendable {
   ) {
     Task {
       do {
-        try await Comraid.shared.login(
+        try await ComRaid.shared.login(
           externalUserId: externalUserId,
           jwt: jwt?.isEmpty == false ? jwt : nil
         )
@@ -84,7 +84,7 @@ public final class ComraidObjCBridge: NSObject, @unchecked Sendable {
   @objc public func logout(completion: @escaping @Sendable (NSError?) -> Void) {
     Task {
       do {
-        try await Comraid.shared.logout()
+        try await ComRaid.shared.logout()
         completion(nil)
       } catch {
         completion(error as NSError)
@@ -95,7 +95,7 @@ public final class ComraidObjCBridge: NSObject, @unchecked Sendable {
   @objc public func optOut(completion: @escaping @Sendable (NSError?) -> Void) {
     Task {
       do {
-        try await Comraid.shared.optOut()
+        try await ComRaid.shared.optOut()
         completion(nil)
       } catch {
         completion(error as NSError)
@@ -106,7 +106,7 @@ public final class ComraidObjCBridge: NSObject, @unchecked Sendable {
   @objc public func optIn(completion: @escaping @Sendable (NSError?) -> Void) {
     Task {
       do {
-        try await Comraid.shared.optIn()
+        try await ComRaid.shared.optIn()
         completion(nil)
       } catch {
         completion(error as NSError)
@@ -118,7 +118,7 @@ public final class ComraidObjCBridge: NSObject, @unchecked Sendable {
     completion: @escaping @Sendable (NSDictionary?, NSError?) -> Void
   ) {
     Task {
-      let value = await Comraid.shared.capabilities()
+      let value = await ComRaid.shared.capabilities()
       completion([
         "platform": "ios",
         "notificationsEnabled": value.notificationsEnabled,
@@ -133,7 +133,7 @@ public final class ComraidObjCBridge: NSObject, @unchecked Sendable {
   ) {
     Task {
       do {
-        completion(try await Comraid.shared.requestPermission(), nil)
+        completion(try await ComRaid.shared.requestPermission(), nil)
       } catch {
         completion(false, error as NSError)
       }
@@ -157,14 +157,14 @@ public final class ComraidObjCBridge: NSObject, @unchecked Sendable {
           requestedPrecision: requestedPrecision,
           fallbackPolicy: fallbackPolicy
         )
-        let notification = ComraidNotification(
+        let notification = ComRaidNotification(
           id: id,
           title: title,
           body: body,
           userInfo: safeUserInfo
         )
         let date = Date(timeIntervalSince1970: triggerAtMillis / 1_000)
-        try await Comraid.shared.schedule(.init(notification: notification, triggerDate: date))
+        try await ComRaid.shared.schedule(.init(notification: notification, triggerDate: date))
         let result = NSMutableDictionary(dictionary: [
           "id": id,
           "requestedPrecision": requestedPrecision,
@@ -196,10 +196,10 @@ public final class ComraidObjCBridge: NSObject, @unchecked Sendable {
           requestedPrecision: requestedPrecision,
           fallbackPolicy: fallbackPolicy
         )
-        let timer = try await Comraid.shared.startTimer(
+        let timer = try await ComRaid.shared.startTimer(
           id: id,
           duration: durationMillis / 1_000,
-          notification: ComraidNotification(
+          notification: ComRaidNotification(
             id: id,
             title: title,
             body: body,
@@ -225,7 +225,7 @@ public final class ComraidObjCBridge: NSObject, @unchecked Sendable {
   ) {
     Task {
       do {
-        try await Comraid.shared.cancel(id: id)
+        try await ComRaid.shared.cancel(id: id)
         completion(nil)
       } catch {
         completion(error as NSError)
@@ -238,7 +238,7 @@ public final class ComraidObjCBridge: NSObject, @unchecked Sendable {
   ) {
     Task {
       do {
-        let schedules = try await Comraid.shared.pendingSchedules().map { request in
+        let schedules = try await ComRaid.shared.pendingSchedules().map { request in
           [
             "id": request.notification.id,
             "title": request.notification.title,
@@ -266,14 +266,14 @@ public final class ComraidObjCBridge: NSObject, @unchecked Sendable {
   ) throws -> String {
     guard requestedPrecision == "inexact" || requestedPrecision == "exact" else {
       throw NSError(
-        domain: "Comraid",
+        domain: "ComRaid",
         code: 1001,
         userInfo: [NSLocalizedDescriptionKey: "Unsupported precision '\(requestedPrecision)'"]
       )
     }
     guard fallbackPolicy == "fail" || fallbackPolicy == "useInexact" else {
       throw NSError(
-        domain: "Comraid",
+        domain: "ComRaid",
         code: 1002,
         userInfo: [NSLocalizedDescriptionKey: "Unsupported fallback policy '\(fallbackPolicy)'"]
       )
@@ -281,7 +281,7 @@ public final class ComraidObjCBridge: NSObject, @unchecked Sendable {
     if requestedPrecision == "exact" {
       guard fallbackPolicy == "useInexact" else {
         throw NSError(
-          domain: "Comraid",
+          domain: "ComRaid",
           code: 1003,
           userInfo: [NSLocalizedDescriptionKey: "Exact alarm semantics are unavailable in this iOS notification API"]
         )

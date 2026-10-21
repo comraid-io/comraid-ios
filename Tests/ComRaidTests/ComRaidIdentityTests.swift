@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import Comraid
+@testable import ComRaid
 
 @Test func loginSendsExternalUserIdOnWire() async throws {
   let harness = try await IdentityHarness.make()
@@ -97,15 +97,15 @@ import Testing
 }
 
 @Test func loginBeforeConfigureThrowsNotConfigured() async throws {
-  let comraid = Comraid()
-  await #expect(throws: ComraidError.notConfigured) {
+  let comraid = ComRaid()
+  await #expect(throws: ComRaidError.notConfigured) {
     try await comraid.login(externalUserId: "user_123")
   }
 }
 
 @Test func loginBeforeSubscriptionReadyThrowsNotReady() async throws {
   let harness = try await IdentityHarness.make()
-  await #expect(throws: ComraidError.notReady) {
+  await #expect(throws: ComRaidError.notReady) {
     try await harness.comraid.login(externalUserId: "user_123")
   }
 }
@@ -161,12 +161,12 @@ import Testing
 }
 
 private struct IdentityHarness {
-  let comraid: Comraid
+  let comraid: ComRaid
   let transport: RecordingTransport
   let store: InMemorySubscriptionStore
 
   static func make(token: String = "token") async throws -> IdentityHarness {
-    let comraid = Comraid()
+    let comraid = ComRaid()
     let transport = RecordingTransport()
     let store = InMemorySubscriptionStore()
     let tokens = FakeTokenProvider(token: token)
