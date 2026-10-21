@@ -10,6 +10,13 @@ struct HttpRequest: Sendable {
 struct HttpResponse: Sendable {
   var statusCode: Int
   var body: Data
+  var headers: [String: String]
+
+  init(statusCode: Int, body: Data, headers: [String: String] = [:]) {
+    self.statusCode = statusCode
+    self.body = body
+    self.headers = headers
+  }
 }
 
 protocol HttpTransport: Sendable {
@@ -37,7 +44,13 @@ struct URLSessionHttpTransport: HttpTransport {
     request.headers.forEach { urlRequest.setValue($0.value, forHTTPHeaderField: $0.key) }
     urlRequest.httpBody = request.body
     let (data, response) = try await session.data(for: urlRequest)
-    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-    return HttpResponse(statusCode: status, body: data)
+    let http = response as? HTTPURLResponse
+    let status = http?.statusCode ?? 0
+    var headers: [String: String] = [:]
+    http?.allHeaderFields.forEach { key, value in
+      guard let key = key as? String else { return }
+      headers[key] = String(describing: value)
+    }
+    return HttpResponse(statusCode: status, body: data, headers: headers)
   }
 }

@@ -108,6 +108,29 @@ public struct ComraidTimer: Codable, Sendable, Equatable {
   }
 }
 
+/**
+ Subscription (device) Properties sent on register / token refresh
+ (`app_version` + `device` object per mobile OpenAPI).
+ */
+public struct DeviceProperties: Sendable, Equatable {
+  public var appVersion: String?
+  public var model: String?
+  public var osVersion: String?
+  public var extras: [String: String]
+
+  public init(
+    appVersion: String? = nil,
+    model: String? = nil,
+    osVersion: String? = nil,
+    extras: [String: String] = [:]
+  ) {
+    self.appVersion = appVersion
+    self.model = model
+    self.osVersion = osVersion
+    self.extras = extras
+  }
+}
+
 public enum ComraidError: Error, Sendable, Equatable {
   case notConfigured
   case notReady
@@ -118,3 +141,9 @@ public enum ComraidError: Error, Sendable, Equatable {
   case persistenceFailed
   case apiError(String)
 }
+
+/// Preferred public type names (`ComRaid` where the language allows).
+public typealias ComRaid = Comraid
+public typealias ComRaidConfiguration = ComraidConfiguration
+public typealias ComRaidNotification = ComraidNotification
+public typealias ComRaidError = ComraidError
