@@ -1,4 +1,4 @@
-# Comraid Apple SDK
+# ComRaid Apple SDK
 
 Swift Package for local notification schedules/timers and the ComRaid mobile identity loop (**Subscription** register, **Login**, **Logout**, Contact-level push opt-in/out). Vocabulary: **Endpoint** / **Subscription**, `external_user_id`, Identity verification **JWT** (`login(externalUserId:jwt:)`). Server-side sends use **Message** / **Notification**, **Campaign**, **Single send**, **Broadcast**, and **Multi-send** (see Node SDK / docs).
 
@@ -7,7 +7,7 @@ Swift Package for local notification schedules/timers and the ComRaid mobile ide
 Configure early with a publishable App ID and APNs environment:
 
 ```swift
-await Comraid.shared.configure(
+await ComRaid.shared.configure(
   .init(
     appId: "cr_app_your_id",
     // apiBaseURL: URL(string: "http://localhost:8080")!, // optional
@@ -24,7 +24,7 @@ await Comraid.shared.configure(
 4. Use Login / Logout / opt-in / opt-out.
 
 ```swift
-let granted = try await Comraid.shared.requestPermission()
+let granted = try await ComRaid.shared.requestPermission()
 
 // In AppDelegate:
 func application(
@@ -32,18 +32,18 @@ func application(
   didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
 ) {
   Task {
-    await Comraid.shared.setAPNsDeviceToken(deviceToken)
-    try? await Comraid.shared.register()
+    await ComRaid.shared.setAPNsDeviceToken(deviceToken)
+    try? await ComRaid.shared.register()
   }
 }
 
-try await Comraid.shared.login(externalUserId: "user_123")
-try await Comraid.shared.login(externalUserId: "user_123", jwt: jwtFromYourBackend)
+try await ComRaid.shared.login(externalUserId: "user_123")
+try await ComRaid.shared.login(externalUserId: "user_123", jwt: jwtFromYourBackend)
 
-try await Comraid.shared.logout()
+try await ComRaid.shared.logout()
 
-try await Comraid.shared.optOut() // Contact Opted out of the push Channel (all Subscriptions)
-try await Comraid.shared.optIn()
+try await ComRaid.shared.optOut() // Contact Opted out of the push Channel (all Subscriptions)
+try await ComRaid.shared.optIn()
 ```
 
 Logout makes the Subscription Inactive; Opted out is Contact × Channel and independent of Inactive.
@@ -53,10 +53,10 @@ On APNs token refresh, call `setAPNsDeviceToken` then `onPushTokenRefresh()`.
 ## Local timers
 
 ```swift
-try await Comraid.shared.startTimer(
+try await ComRaid.shared.startTimer(
   id: "focus-1",
   duration: 25 * 60,
-  notification: ComraidNotification(
+  notification: ComRaidNotification(
     id: "focus-1",
     title: "Focus complete",
     body: "Your timer has finished."

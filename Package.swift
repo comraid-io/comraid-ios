@@ -2,16 +2,18 @@
 import PackageDescription
 
 let package = Package(
-  name: "Comraid",
+  name: "ComRaid",
   platforms: [
     .iOS(.v15),
     .macOS(.v13),
   ],
   products: [
-    .library(name: "Comraid", targets: ["Comraid"]),
+    .library(name: "ComRaid", targets: ["ComRaid"]),
+    // Temporary product alias until ticket 04 contract.
+    .library(name: "Comraid", targets: ["ComRaid"]),
   ],
   targets: [
-    .target(name: "Comraid"),
-    .testTarget(name: "ComraidTests", dependencies: ["Comraid"]),
+    .target(name: "ComRaid"),
+    .testTarget(name: "ComRaidTests", dependencies: ["ComRaid"]),
   ]
 )

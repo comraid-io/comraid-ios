@@ -1,5 +1,5 @@
 import Foundation
-@testable import Comraid
+@testable import ComRaid
 
 final class InMemorySubscriptionStore: SubscriptionCredentialStore, @unchecked Sendable {
   private let lock = NSLock()

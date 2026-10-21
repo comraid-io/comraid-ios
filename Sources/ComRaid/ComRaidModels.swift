@@ -5,7 +5,7 @@ public enum APNsEnvironment: String, Sendable, Equatable {
   case production
 }
 
-public struct ComraidConfiguration: Sendable, Equatable {
+public struct ComRaidConfiguration: Sendable, Equatable {
   /// Publishable App ID (`cr_app_…`). Required for mobile API authentication.
   public var appId: String
   /// API base URL. Defaults to the hosted ComRaid API.
@@ -27,7 +27,7 @@ public struct ComraidConfiguration: Sendable, Equatable {
   }
 }
 
-public struct ComraidNotification: Codable, Sendable, Equatable {
+public struct ComRaidNotification: Codable, Sendable, Equatable {
   public var id: String
   public var title: String
   public var body: String
@@ -55,27 +55,27 @@ public struct ComraidNotification: Codable, Sendable, Equatable {
   }
 }
 
-public struct ComraidScheduleRequest: Codable, Sendable, Equatable {
-  public var notification: ComraidNotification
+public struct ComRaidScheduleRequest: Codable, Sendable, Equatable {
+  public var notification: ComRaidNotification
   public var triggerDate: Date
 
-  public init(notification: ComraidNotification, triggerDate: Date) {
+  public init(notification: ComRaidNotification, triggerDate: Date) {
     self.notification = notification
     self.triggerDate = triggerDate
   }
 }
 
-public struct ComraidCapabilities: Sendable, Equatable {
-  public var authorizationStatus: ComraidAuthorizationStatus
+public struct ComRaidCapabilities: Sendable, Equatable {
+  public var authorizationStatus: ComRaidAuthorizationStatus
   public var notificationsEnabled: Bool
 
-  public init(authorizationStatus: ComraidAuthorizationStatus, notificationsEnabled: Bool) {
+  public init(authorizationStatus: ComRaidAuthorizationStatus, notificationsEnabled: Bool) {
     self.authorizationStatus = authorizationStatus
     self.notificationsEnabled = notificationsEnabled
   }
 }
 
-public enum ComraidAuthorizationStatus: String, Sendable, Equatable {
+public enum ComRaidAuthorizationStatus: String, Sendable, Equatable {
   case notDetermined
   case denied
   case authorized
@@ -84,18 +84,18 @@ public enum ComraidAuthorizationStatus: String, Sendable, Equatable {
   case unknown
 }
 
-public struct ComraidTimer: Codable, Sendable, Equatable {
+public struct ComRaidTimer: Codable, Sendable, Equatable {
   public enum State: String, Codable, Sendable { case running, paused, cancelled, completed }
 
   public var id: String
-  public var notification: ComraidNotification
+  public var notification: ComRaidNotification
   public var state: State
   public var targetDate: Date?
   public var remainingDuration: TimeInterval
 
   public init(
     id: String,
-    notification: ComraidNotification,
+    notification: ComRaidNotification,
     state: State,
     targetDate: Date?,
     remainingDuration: TimeInterval
@@ -108,7 +108,7 @@ public struct ComraidTimer: Codable, Sendable, Equatable {
   }
 }
 
-public enum ComraidError: Error, Sendable, Equatable {
+public enum ComRaidError: Error, Sendable, Equatable {
   case notConfigured
   case notReady
   case invalidIdentifier

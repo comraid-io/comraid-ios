@@ -28,7 +28,7 @@ struct URLSessionHttpTransport: HttpTransport {
   func execute(_ request: HttpRequest) async throws -> HttpResponse {
     let base = apiBaseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     guard let url = URL(string: base + request.path) else {
-      throw ComraidError.apiError("Invalid URL for path \(request.path)")
+      throw ComRaidError.apiError("Invalid URL for path \(request.path)")
     }
     var urlRequest = URLRequest(url: url)
     urlRequest.httpMethod = request.method
