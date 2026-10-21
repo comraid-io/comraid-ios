@@ -16,7 +16,6 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
     let configuredSuite = storageSuiteName?.isEmpty == false
       ? storageSuiteName
       : (Bundle.main.object(forInfoDictionaryKey: "ComRaidStorageSuiteName") as? String)
-        ?? (Bundle.main.object(forInfoDictionaryKey: "ComraidStorageSuiteName") as? String)
     let env: APNsEnvironment
     switch apnsEnvironment {
     case "sandbox": env = .sandbox

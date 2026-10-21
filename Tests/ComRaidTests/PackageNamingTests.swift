@@ -56,6 +56,15 @@ import Testing
   #expect(offenders.isEmpty, "shipped paths must not contain comraide misspellings: \(offenders)")
 }
 
+@Test func infoPlistStorageSuiteKeyIsComRaidOnly() throws {
+  let bridge = try String(
+    contentsOf: packageRoot().appendingPathComponent("Sources/ComRaid/ComRaidObjCBridge.swift"),
+    encoding: .utf8
+  )
+  #expect(bridge.contains("ComRaidStorageSuiteName"))
+  #expect(!bridge.contains("ComraidStorageSuiteName"))
+}
+
 private func packageRoot() -> URL {
   URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent() // ComRaidTests
