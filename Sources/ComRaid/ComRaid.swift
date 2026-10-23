@@ -183,14 +183,19 @@ public actor ComRaid {
   }
 
   /**
-   Upsert Contact Attributes for the logged-in External user ID
-   (`PUT /contacts/{external_user_id}/attributes`).
+   Upsert Contact Attributes for the logged-in Contact
+   (`PUT /mobile/subscriptions/{id}/attributes`).
    */
   public func setAttributes(_ attributes: sending [String: Any]) async throws {
     let api = try requireAPI()
     guard let externalUserId, !externalUserId.isEmpty else { throw ComRaidError.notReady }
     guard !attributes.isEmpty else { throw ComRaidError.invalidIdentifier }
-    try await api.upsertAttributes(externalUserId: externalUserId, attributes: attributes)
+    let (subscriptionId, credential) = try requireSubscription()
+    try await api.upsertAttributes(
+      subscriptionId: subscriptionId,
+      credential: credential,
+      attributes: attributes
+    )
   }
 
   /// Enqueue + flush a delivered ACK. Returns false when ids are blank.
