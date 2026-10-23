@@ -83,10 +83,13 @@ struct MobileApiClient: Sendable {
     try requireSuccess(response, expected: [200])
   }
 
-  func upsertAttributes(externalUserId: String, attributes: [String: Any]) async throws {
+  func upsertAttributes(subscriptionId: String, credential: String, attributes: [String: Any]) async throws {
     let response = try await put(
-      path: "/contacts/\(externalUserId)/attributes",
-      payload: ["attributes": attributes]
+      path: "/mobile/subscriptions/\(subscriptionId)/attributes",
+      payload: [
+        "subscription_credential": credential,
+        "attributes": attributes,
+      ]
     )
     try requireSuccess(response, expected: [200])
   }
