@@ -65,6 +65,20 @@ import Testing
   #expect(!bridge.contains("ComraidStorageSuiteName"))
 }
 
+@Test func objcBridgeExposesAttributesAndAckAPIs() throws {
+  let bridge = try String(
+    contentsOf: packageRoot().appendingPathComponent("Sources/ComRaid/ComRaidObjCBridge.swift"),
+    encoding: .utf8
+  )
+  #expect(bridge.contains("func setAttributes("))
+  #expect(bridge.contains("func acknowledgeDelivered("))
+  #expect(bridge.contains("func acknowledgeOpened("))
+  #expect(bridge.contains("func flushAcks("))
+  #expect(bridge.contains("ComRaid.shared.setAttributes"))
+  #expect(bridge.contains("ComRaid.shared.acknowledgeDelivered"))
+  #expect(bridge.contains("ComRaid.shared.acknowledgeOpened"))
+  #expect(bridge.contains("ComRaid.shared.flushAcks"))
+}
 private func packageRoot() -> URL {
   URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent() // ComRaidTests

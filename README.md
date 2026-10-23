@@ -82,6 +82,19 @@ await ComRaid.shared.flushAcks()
 
 Use `RemoteNotificationDisplay.content(from:)` / `.categories(from:)` to build `UNNotificationContent` and action categories from `cr_*` payload keys. Delivered/opened ACKs use a durable UserDefaults queue that survives background delivery.
 
+## Deep links and rich fields
+
+API `content.push.deep_link` arrives on the notification as `cr_deep_link` in `userInfo` (flattened with other `cr_*` keys). Read it in your open handler (for example after `handleNotificationResponse` or in `userNotificationCenter(_:didReceive:)`) and navigate yourself — the SDK does **not** auto-open URLs.
+
+```swift
+let userInfo = response.notification.request.content.userInfo
+if let deepLink = userInfo["cr_deep_link"] as? String {
+  // Host app owns routing (URL / coordinator / router)
+}
+```
+
+For standard APNs alerts, `sound`, `subtitle`, `badge`, and `thread-id` are applied by the system from the aps payload. `RemoteNotificationDisplay.content(from:)` is for app-rendered / data-heavy paths and is not required for typical OS-presented Notifications.
+
 ## Local timers
 
 ```swift

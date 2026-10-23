@@ -253,6 +253,81 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
     }
   }
 
+  @objc public func setAttributes(
+    _ attributes: NSDictionary,
+    completion: @escaping @Sendable (NSError?) -> Void
+  ) {
+    guard JSONSerialization.isValidJSONObject(attributes) else {
+      completion(NSError(
+        domain: "ComRaid",
+        code: 2001,
+        userInfo: [NSLocalizedDescriptionKey: "attributes must encode a JSON object"]
+      ))
+      return
+    }
+    let data: Data
+    do {
+      data = try JSONSerialization.data(withJSONObject: attributes)
+    } catch {
+      completion(error as NSError)
+      return
+    }
+    Task {
+      do {
+        let object = try JSONSerialization.jsonObject(with: data)
+        guard let map = object as? [String: Any] else {
+          throw NSError(
+            domain: "ComRaid",
+            code: 2001,
+            userInfo: [NSLocalizedDescriptionKey: "attributes must encode a JSON object"]
+          )
+        }
+        try await ComRaid.shared.setAttributes(map)
+        completion(nil)
+      } catch {
+        completion(error as NSError)
+      }
+    }
+  }
+
+  @objc public func acknowledgeDelivered(
+    deliveryId: String,
+    attributionToken: String,
+    completion: @escaping @Sendable (Bool, NSError?) -> Void
+  ) {
+    Task {
+      let ok = await ComRaid.shared.acknowledgeDelivered(
+        deliveryId: deliveryId,
+        attributionToken: attributionToken
+      )
+      completion(ok, nil)
+    }
+  }
+
+  @objc public func acknowledgeOpened(
+    deliveryId: String,
+    attributionToken: String,
+    actionId: String?,
+    completion: @escaping @Sendable (Bool, NSError?) -> Void
+  ) {
+    let action = actionId.flatMap { $0.isEmpty ? nil : $0 }
+    Task {
+      let ok = await ComRaid.shared.acknowledgeOpened(
+        deliveryId: deliveryId,
+        attributionToken: attributionToken,
+        actionId: action
+      )
+      completion(ok, nil)
+    }
+  }
+
+  @objc public func flushAcks(completion: @escaping @Sendable (NSError?) -> Void) {
+    Task {
+      await ComRaid.shared.flushAcks()
+      completion(nil)
+    }
+  }
+
   private func stringDictionary(_ value: NSDictionary) -> [String: String] {
     value.reduce(into: [:]) { result, entry in
       guard let key = entry.key as? String, let string = entry.value as? String else { return }

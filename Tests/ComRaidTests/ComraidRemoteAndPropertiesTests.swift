@@ -46,9 +46,11 @@ import Testing
 
   let request = harness.transport.requests[1]
   #expect(request.method == "PUT")
-  #expect(request.path == "/contacts/user_123/attributes")
+  #expect(request.path == "/mobile/subscriptions/sub-1/attributes")
   #expect(request.headers["X-ComRaid-App-Id"] == "cr_app_test")
-  let attrs = (try JSONSerialization.jsonObject(with: #require(request.body)) as! [String: Any])["attributes"] as! [String: Any]
+  let body = try JSONSerialization.jsonObject(with: #require(request.body)) as! [String: Any]
+  #expect(body["subscription_credential"] as? String == "cred-1")
+  let attrs = body["attributes"] as! [String: Any]
   #expect(attrs["plan"] as? String == "premium")
   #expect((attrs["tier"] as? NSNumber)?.intValue == 2)
 }
