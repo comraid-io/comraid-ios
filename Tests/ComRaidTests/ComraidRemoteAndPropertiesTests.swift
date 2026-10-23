@@ -55,6 +55,43 @@ import Testing
   #expect((attrs["tier"] as? NSNumber)?.intValue == 2)
 }
 
+@Test func setAttributesEmptyMapAfterLoginPutsEmptyAttributesBody() async throws {
+  let harness = try await RemoteHarness.make()
+  harness.store.save(subscriptionId: "sub-1", credential: "cred-1")
+  harness.transport.enqueue(
+    HttpResponse(
+      statusCode: 200,
+      body: Data(#"{"subscription_id":"sub-1","contact_id":"c-1","external_user_id":"user_123","anonymous":false,"verified":false}"#.utf8)
+    ),
+    HttpResponse(
+      statusCode: 200,
+      body: Data(#"{"contact_id":"c-1","external_user_id":"user_123","updated_attributes":[]}"#.utf8)
+    )
+  )
+
+  try await harness.comraid.login(externalUserId: "user_123")
+  try await harness.comraid.setAttributes([:])
+
+  let request = harness.transport.requests[1]
+  #expect(request.method == "PUT")
+  #expect(request.path == "/mobile/subscriptions/sub-1/attributes")
+  #expect(request.headers["X-ComRaid-App-Id"] == "cr_app_test")
+  let body = try JSONSerialization.jsonObject(with: #require(request.body)) as! [String: Any]
+  #expect(body["subscription_credential"] as? String == "cred-1")
+  let attrs = body["attributes"] as! [String: Any]
+  #expect(attrs.isEmpty)
+}
+
+@Test func setAttributesBeforeLoginThrowsNotReady() async throws {
+  let harness = try await RemoteHarness.make()
+  harness.store.save(subscriptionId: "sub-1", credential: "cred-1")
+
+  await #expect(throws: ComRaidError.notReady) {
+    try await harness.comraid.setAttributes([:])
+  }
+  #expect(harness.transport.requests.isEmpty)
+}
+
 @Test func acknowledgeDeliveredPostsViaAckQueueTransport() async throws {
   let harness = try await RemoteHarness.make()
   harness.transport.nextResponse = HttpResponse(
