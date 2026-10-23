@@ -228,7 +228,7 @@ Upserts Contact Attributes for the logged-in Contact (`PUT /mobile/subscriptions
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `attributes` | `[String: Any]` | Non-empty Attribute map |
+| `attributes` | `[String: Any]` | Attribute map (empty map is a successful empty update) |
 
 **Returns:** `Void`
 
@@ -501,7 +501,7 @@ Public `ComRaidError` cases:
 |------|------|
 | `notConfigured` | Called before `configure` |
 | `notReady` | Missing Subscription credential or Login required (e.g. `setAttributes`) |
-| `invalidIdentifier` | Empty External user ID or empty Attributes map |
+| `invalidIdentifier` | Empty External user ID |
 | `triggerMustBeInFuture` | Invalid schedule/timer duration or past trigger |
 | `timerNotFound` | Unknown timer id |
 | `timerNotPaused` | Pause/resume state mismatch |

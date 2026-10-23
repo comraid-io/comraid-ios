@@ -189,7 +189,6 @@ public actor ComRaid {
   public func setAttributes(_ attributes: sending [String: Any]) async throws {
     let api = try requireAPI()
     guard let externalUserId, !externalUserId.isEmpty else { throw ComRaidError.notReady }
-    guard !attributes.isEmpty else { throw ComRaidError.invalidIdentifier }
     let (subscriptionId, credential) = try requireSubscription()
     try await api.upsertAttributes(
       subscriptionId: subscriptionId,
