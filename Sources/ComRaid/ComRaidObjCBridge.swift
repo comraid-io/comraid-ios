@@ -1,4 +1,5 @@
 import Foundation
+import UserNotifications
 
 @objc(ComraidBridge)
 public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
@@ -6,11 +7,19 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
 
   private override init() {}
 
+  private var eventEmitter: (@Sendable (String, NSDictionary) -> Void)?
+  private var foregroundToken: ComRaidListenerToken?
+  private var backgroundToken: ComRaidListenerToken?
+  private var openedToken: ComRaidListenerToken?
+  private var tokenRefreshToken: ComRaidListenerToken?
+  private let listenerLock = NSLock()
+
   @objc public func configure(
     appId: String,
     apiBaseURL: String?,
     apnsEnvironment: String,
     storageSuiteName: String?,
+    displayForegroundNotifications: Bool,
     completion: @escaping @Sendable (NSError?) -> Void
   ) {
     let configuredSuite = storageSuiteName?.isEmpty == false
@@ -35,11 +44,240 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
           appId: appId,
           apiBaseURL: baseURL,
           apnsEnvironment: env,
-          storageSuiteName: configuredSuite
+          storageSuiteName: configuredSuite,
+          displayForegroundNotifications: displayForegroundNotifications
         )
       )
+      self.attachReceiveListenersIfNeeded()
       completion(nil)
     }
+  }
+
+  /// Backward-compatible configure (foreground display defaults to true).
+  @objc public func configure(
+    appId: String,
+    apiBaseURL: String?,
+    apnsEnvironment: String,
+    storageSuiteName: String?,
+    completion: @escaping @Sendable (NSError?) -> Void
+  ) {
+    configure(
+      appId: appId,
+      apiBaseURL: apiBaseURL,
+      apnsEnvironment: apnsEnvironment,
+      storageSuiteName: storageSuiteName,
+      displayForegroundNotifications: true,
+      completion: completion
+    )
+  }
+
+  /**
+   RN / ObjC hosts set this to receive `comraid_message`, `comraid_background_message`,
+   `comraid_notification_opened`, and `comraid_token_refresh` payloads.
+   */
+  @objc public func setEventEmitter(_ emitter: (@Sendable (String, NSDictionary) -> Void)?) {
+    listenerLock.withLock { eventEmitter = emitter }
+    if emitter != nil {
+      attachReceiveListenersIfNeeded()
+    }
+  }
+
+  @objc public func getToken(
+    completion: @escaping @Sendable (String?, NSError?) -> Void
+  ) {
+    Task {
+      do {
+        completion(try await ComRaid.shared.getToken(), nil)
+      } catch {
+        completion(nil, error as NSError)
+      }
+    }
+  }
+
+  @objc public func getInitialNotification(
+    completion: @escaping @Sendable (NSDictionary?, NSError?) -> Void
+  ) {
+    Task {
+      let event = await ComRaid.shared.getInitialNotification()
+      completion(event.map { Self.remoteMessageDictionary($0) }, nil)
+    }
+  }
+
+  @objc public func presentNotification(
+    messageJson: String,
+    completion: @escaping @Sendable (NSError?) -> Void
+  ) {
+    Task {
+      do {
+        let event = try Self.parseRemoteMessage(messageJson)
+        try await ComRaid.shared.presentNotification(event)
+        completion(nil)
+      } catch {
+        completion(error as NSError)
+      }
+    }
+  }
+
+  @objc public func setBackgroundHandlerRegistered(
+    _ registered: Bool,
+    completion: @escaping @Sendable (NSError?) -> Void
+  ) {
+    Task {
+      await ComRaid.shared.setBackgroundHandlerRegistered(registered)
+      completion(nil)
+    }
+  }
+
+  @objc public func handleRemoteNotification(
+    userInfo: NSDictionary,
+    appInForeground: Bool,
+    completion: @escaping @Sendable (NSError?) -> Void
+  ) {
+    let data = PushPayload.fromUserInfo(Self.anyHashableDictionary(userInfo))
+    Task {
+      await ComRaid.shared.handleRemoteNotification(data: data, appInForeground: appInForeground)
+      completion(nil)
+    }
+  }
+
+  @objc public func presentationOptions(
+    forUserInfo userInfo: NSDictionary,
+    completion: @escaping @Sendable (UInt, NSError?) -> Void
+  ) {
+    let data = PushPayload.fromUserInfo(Self.anyHashableDictionary(userInfo))
+    Task {
+      let options = await ComRaid.shared.presentationOptions(forData: data)
+      completion(options.rawValue, nil)
+    }
+  }
+
+  @objc public func handleNotificationResponse(
+    userInfo: NSDictionary,
+    actionIdentifier: String,
+    completion: @escaping @Sendable (NSError?) -> Void
+  ) {
+    let data = PushPayload.fromUserInfo(Self.anyHashableDictionary(userInfo))
+    let actionId: String? = {
+      switch actionIdentifier {
+      case UNNotificationDefaultActionIdentifier, UNNotificationDismissActionIdentifier:
+        return nil
+      default:
+        return actionIdentifier.isEmpty ? nil : actionIdentifier
+      }
+    }()
+    Task {
+      await ComRaid.shared.handleNotificationOpen(data: data, actionId: actionId)
+      completion(nil)
+    }
+  }
+
+  private func attachReceiveListenersIfNeeded() {
+    listenerLock.withLock {
+      if foregroundToken == nil {
+        foregroundToken = RemoteReceiveHub.shared.addForegroundMessageListener { [weak self] event in
+          self?.emit("comraid_message", Self.remoteMessageDictionary(event))
+        }
+      }
+      if backgroundToken == nil {
+        backgroundToken = RemoteReceiveHub.shared.addBackgroundMessageListener { [weak self] event in
+          self?.emit("comraid_background_message", Self.remoteMessageDictionary(event))
+        }
+      }
+      if openedToken == nil {
+        openedToken = RemoteReceiveHub.shared.addNotificationOpenedListener { [weak self] event in
+          self?.emit("comraid_notification_opened", Self.remoteMessageDictionary(event))
+        }
+      }
+      if tokenRefreshToken == nil {
+        tokenRefreshToken = RemoteReceiveHub.shared.addTokenRefreshListener { [weak self] token in
+          self?.emit("comraid_token_refresh", ["token": token])
+        }
+      }
+    }
+  }
+
+  private func emit(_ name: String, _ payload: NSDictionary) {
+    let emitter = listenerLock.withLock { eventEmitter }
+    emitter?(name, payload)
+  }
+
+  private static func anyHashableDictionary(_ value: NSDictionary) -> [AnyHashable: Any] {
+    var out: [AnyHashable: Any] = [:]
+    for (key, obj) in value {
+      guard let hashable = key as? AnyHashable else { continue }
+      out[hashable] = obj
+    }
+    return out
+  }
+
+  private static func remoteMessageDictionary(_ event: RemoteMessageEvent) -> NSDictionary {
+    let result = NSMutableDictionary()
+    if let messageId = event.messageId { result["messageId"] = messageId }
+    if let deliveryId = event.deliveryId { result["deliveryId"] = deliveryId }
+    if let attributionToken = event.attributionToken { result["attributionToken"] = attributionToken }
+    if let title = event.title { result["title"] = title }
+    if let body = event.body { result["body"] = body }
+    if let deepLink = event.deepLink { result["deepLink"] = deepLink }
+    if let actionId = event.actionId { result["actionId"] = actionId }
+    result["data"] = event.data as NSDictionary
+    if !event.actions.isEmpty {
+      result["actions"] = event.actions.map { action -> NSDictionary in
+        let obj = NSMutableDictionary()
+        obj["id"] = action.id
+        obj["text"] = action.text
+        if let icon = action.icon { obj["icon"] = icon }
+        return obj
+      } as NSArray
+    }
+    return result
+  }
+
+  private static func parseRemoteMessage(_ messageJson: String) throws -> RemoteMessageEvent {
+    guard let raw = messageJson.data(using: .utf8),
+          let json = try JSONSerialization.jsonObject(with: raw) as? [String: Any] else {
+      throw NSError(
+        domain: "ComRaid",
+        code: 2001,
+        userInfo: [NSLocalizedDescriptionKey: "presentNotification message must be a JSON object"]
+      )
+    }
+    let dataObj = json["data"] as? [String: Any] ?? [:]
+    var data: [String: String] = [:]
+    for (key, value) in dataObj {
+      if let string = value as? String {
+        data[key] = string
+      } else if let number = value as? NSNumber {
+        data[key] = number.stringValue
+      }
+    }
+    var actions: [RemoteMessageAction] = []
+    if let actionsJson = json["actions"] as? [[String: Any]] {
+      for obj in actionsJson {
+        let id = (obj["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let text = (obj["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !id.isEmpty, !text.isEmpty else { continue }
+        let icon = (obj["icon"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        actions.append(RemoteMessageAction(
+          id: id,
+          text: text,
+          icon: (icon?.isEmpty == false) ? icon : nil
+        ))
+      }
+    }
+    func string(_ key: String) -> String? {
+      (json[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    }
+    return RemoteMessageEvent(
+      messageId: string("messageId"),
+      deliveryId: string("deliveryId"),
+      attributionToken: string("attributionToken"),
+      title: string("title"),
+      body: string("body"),
+      data: data,
+      deepLink: string("deepLink"),
+      actions: actions,
+      actionId: string("actionId")
+    )
   }
 
   @objc public func setAPNsDeviceToken(
@@ -335,6 +573,16 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
     }
   }
 
+}
+
+private extension String {
+  var nilIfEmpty: String? {
+    let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+  }
+}
+
+extension ComRaidObjCBridge {
   private func precisionFallback(
     requestedPrecision: String,
     fallbackPolicy: String

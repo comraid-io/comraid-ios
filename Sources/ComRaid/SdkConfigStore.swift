@@ -7,6 +7,7 @@ struct SdkPersistedConfig: Equatable, Sendable {
   var apiBaseURL: URL
   var apnsEnvironment: APNsEnvironment
   var storageSuiteName: String?
+  var displayForegroundNotifications: Bool
 }
 
 final class SdkConfigStore: @unchecked Sendable {
@@ -23,6 +24,7 @@ final class SdkConfigStore: @unchecked Sendable {
       defaults.set(configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines), forKey: prefix + "app_id")
       defaults.set(configuration.apiBaseURL.absoluteString, forKey: prefix + "api_base_url")
       defaults.set(configuration.apnsEnvironment.rawValue, forKey: prefix + "apns_environment")
+      defaults.set(configuration.displayForegroundNotifications, forKey: prefix + "display_fg")
       if let suite = configuration.storageSuiteName {
         defaults.set(suite, forKey: prefix + "storage_suite")
       } else {
@@ -41,11 +43,18 @@ final class SdkConfigStore: @unchecked Sendable {
       let envRaw = defaults.string(forKey: prefix + "apns_environment") ?? APNsEnvironment.sandbox.rawValue
       let env = APNsEnvironment(rawValue: envRaw) ?? .sandbox
       let suite = defaults.string(forKey: prefix + "storage_suite")
+      let displayFg: Bool
+      if defaults.object(forKey: prefix + "display_fg") == nil {
+        displayFg = true
+      } else {
+        displayFg = defaults.bool(forKey: prefix + "display_fg")
+      }
       return SdkPersistedConfig(
         appId: appId,
         apiBaseURL: base,
         apnsEnvironment: env,
-        storageSuiteName: suite
+        storageSuiteName: suite,
+        displayForegroundNotifications: displayFg
       )
     }
   }

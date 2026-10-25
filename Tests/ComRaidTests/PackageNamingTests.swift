@@ -74,10 +74,16 @@ import Testing
   #expect(bridge.contains("func acknowledgeDelivered("))
   #expect(bridge.contains("func acknowledgeOpened("))
   #expect(bridge.contains("func flushAcks("))
+  #expect(bridge.contains("func getToken("))
+  #expect(bridge.contains("func getInitialNotification("))
+  #expect(bridge.contains("func presentNotification("))
+  #expect(bridge.contains("func setEventEmitter("))
   #expect(bridge.contains("ComRaid.shared.setAttributes"))
   #expect(bridge.contains("ComRaid.shared.acknowledgeDelivered"))
   #expect(bridge.contains("ComRaid.shared.acknowledgeOpened"))
   #expect(bridge.contains("ComRaid.shared.flushAcks"))
+  #expect(bridge.contains("ComRaid.shared.getToken"))
+  #expect(bridge.contains("ComRaid.shared.presentNotification"))
 }
 private func packageRoot() -> URL {
   URL(fileURLWithPath: #filePath)
