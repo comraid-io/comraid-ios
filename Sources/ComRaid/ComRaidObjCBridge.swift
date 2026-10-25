@@ -491,6 +491,25 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
     }
   }
 
+  @objc public func setDeviceProperties(
+    appVersion: String?,
+    model: String?,
+    osVersion: String?,
+    extras: NSDictionary?,
+    completion: @escaping @Sendable (NSError?) -> Void
+  ) {
+    let properties = DeviceProperties(
+      appVersion: appVersion?.nilIfEmpty,
+      model: model?.nilIfEmpty,
+      osVersion: osVersion?.nilIfEmpty,
+      extras: stringExtras(extras)
+    )
+    Task {
+      await ComRaid.shared.setDeviceProperties(properties)
+      completion(nil)
+    }
+  }
+
   @objc public func setAttributes(
     _ attributes: NSDictionary,
     completion: @escaping @Sendable (NSError?) -> Void
@@ -570,6 +589,23 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
     value.reduce(into: [:]) { result, entry in
       guard let key = entry.key as? String, let string = entry.value as? String else { return }
       result[key] = string
+    }
+  }
+
+  private func stringExtras(_ value: NSDictionary?) -> [String: String] {
+    guard let value else { return [:] }
+    return value.reduce(into: [:]) { result, entry in
+      guard let key = entry.key as? String else { return }
+      switch entry.value {
+      case is NSNull:
+        break
+      case let string as String:
+        result[key] = string
+      case let number as NSNumber:
+        result[key] = number.stringValue
+      default:
+        result[key] = "\(entry.value)"
+      }
     }
   }
 

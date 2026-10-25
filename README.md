@@ -601,9 +601,9 @@ Public `ComRaidError` cases:
 
 ## Objective-C bridge
 
-`ComRaidObjCBridge` (`@objc(ComraidBridge)`) exposes a **subset** of the Swift API for React Native / ObjC hosts: configure (including `displayForegroundNotifications`), APNs token, permission, register, login/logout, opt-in/out, capabilities, schedule/cancel/pendingSchedules, `startTimer`, Attributes, ACK helpers, `getToken`, `getInitialNotification`, `presentNotification`, receive event emitter, and remote handle/presentation helpers.
+`ComRaidObjCBridge` (`@objc(ComraidBridge)`) exposes a **subset** of the Swift API for React Native / ObjC hosts: configure (including `displayForegroundNotifications`), APNs token, permission, register, login/logout, opt-in/out, capabilities, schedule/cancel/pendingSchedules, `startTimer`, `setDeviceProperties`, Attributes, ACK helpers, `getToken`, `getInitialNotification`, `presentNotification`, receive event emitter, and remote handle/presentation helpers.
 
-It does **not** mirror full Swift parity (for example timer pause/resume/list, `onPushTokenRefresh`, `setDeviceProperties`, or direct `RemoteNotificationDisplay` builders). Prefer the Swift `ComRaid` actor when possible.
+It does **not** mirror full Swift parity (for example timer pause/resume/list, `onPushTokenRefresh`, or direct `RemoteNotificationDisplay` builders). Prefer the Swift `ComRaid` actor when possible.
 
 ## Not wrapped (HTTP-only)
 
