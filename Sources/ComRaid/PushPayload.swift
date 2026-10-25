@@ -18,6 +18,21 @@ struct PushDisplay: Equatable, Sendable {
 }
 
 enum PushPayload {
+  /// Reserved `cr_*` keys — stripped from the RN/event `data` map so sender keys stay unchanged.
+  private static let reservedKeys: Set<String> = [
+    "cr_delivery_id",
+    "cr_attribution_token",
+    "cr_message_id",
+    "cr_message_recipient_id",
+    "cr_title",
+    "cr_body",
+    "cr_image_url",
+    "cr_android_channel_id",
+    "cr_deep_link",
+    "cr_actions",
+    "cr_data_only",
+  ]
+
   static func attribution(_ data: [String: String]?) -> DeliveryAttribution? {
     guard let data else { return nil }
     guard let deliveryId = data["cr_delivery_id"]?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -25,6 +40,33 @@ enum PushPayload {
     guard let token = data["cr_attribution_token"]?.trimmingCharacters(in: .whitespacesAndNewlines),
           !token.isEmpty else { return nil }
     return DeliveryAttribution(deliveryId: deliveryId, attributionToken: token)
+  }
+
+  static func isDataOnly(_ data: [String: String]?) -> Bool {
+    guard let raw = data?["cr_data_only"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    else { return false }
+    return raw == "true" || raw == "1"
+  }
+
+  static func messageId(_ data: [String: String]?) -> String? {
+    data?["cr_message_id"]?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+  }
+
+  /// Sender `data` keys only — ComRaid reserved `cr_*` keys removed.
+  static func senderData(_ data: [String: String]?) -> [String: String] {
+    guard let data else { return [:] }
+    return data.filter { key, _ in !reservedKeys.contains(key) && !key.hasPrefix("cr_") }
+  }
+
+  /**
+   First-class deep link from API `content.push.deep_link`, delivered as `cr_deep_link`.
+   Returns nil when missing, blank, or not a scheme-bearing URI.
+   */
+  static func deepLink(_ data: [String: String]?) -> String? {
+    guard let raw = data?["cr_deep_link"]?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    else { return nil }
+    guard let url = URL(string: raw), let scheme = url.scheme, !scheme.isEmpty else { return nil }
+    return raw
   }
 
   static func display(_ data: [String: String]?) -> PushDisplay {

@@ -96,11 +96,131 @@ public actor ComRaid {
     ackQueue = nil
     deviceProperties = nil
     externalUserId = nil
+    RemoteReceiveHub.shared.resetForTests()
   }
 
   /// Forward the APNs device token from `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`.
   public func setAPNsDeviceToken(_ tokenData: Data) async {
     await apnsTokenProvider?.setDeviceToken(tokenData)
+    if let hex = try? await apnsTokenProvider?.currentToken() {
+      RemoteReceiveHub.shared.notifyTokenRefresh(hex)
+    }
+  }
+
+  /// Provider push token (APNs hex). Not a ComRaid Endpoint / Subscription id.
+  public func getToken() async throws -> String {
+    try await requireTokenProvider().currentToken()
+  }
+
+  /**
+   Cold-start tap payload, if any. Cleared after the first successful read.
+   */
+  public func getInitialNotification() -> RemoteMessageEvent? {
+    RemoteReceiveHub.shared.getInitialNotification()
+  }
+
+  @discardableResult
+  public func addForegroundMessageListener(_ listener: @escaping RemoteMessageListener) -> ComRaidListenerToken {
+    RemoteReceiveHub.shared.addForegroundMessageListener(listener)
+  }
+
+  public func removeForegroundMessageListener(_ token: ComRaidListenerToken) {
+    RemoteReceiveHub.shared.removeForegroundMessageListener(token)
+  }
+
+  @discardableResult
+  public func addBackgroundMessageListener(_ listener: @escaping RemoteMessageListener) -> ComRaidListenerToken {
+    RemoteReceiveHub.shared.addBackgroundMessageListener(listener)
+  }
+
+  public func removeBackgroundMessageListener(_ token: ComRaidListenerToken) {
+    RemoteReceiveHub.shared.removeBackgroundMessageListener(token)
+  }
+
+  @discardableResult
+  public func addNotificationOpenedListener(_ listener: @escaping RemoteMessageListener) -> ComRaidListenerToken {
+    RemoteReceiveHub.shared.addNotificationOpenedListener(listener)
+  }
+
+  public func removeNotificationOpenedListener(_ token: ComRaidListenerToken) {
+    RemoteReceiveHub.shared.removeNotificationOpenedListener(token)
+  }
+
+  @discardableResult
+  public func addTokenRefreshListener(_ listener: @escaping TokenRefreshListener) -> ComRaidListenerToken {
+    RemoteReceiveHub.shared.addTokenRefreshListener(listener)
+  }
+
+  public func removeTokenRefreshListener(_ token: ComRaidListenerToken) {
+    RemoteReceiveHub.shared.removeTokenRefreshListener(token)
+  }
+
+  /**
+   Marks that a JS background message handler is registered (RN).
+   Receive still never auto-opens; this only mirrors the Android flag.
+   */
+  public func setBackgroundHandlerRegistered(_ registered: Bool) {
+    RemoteReceiveHub.shared.setBackgroundHandlerRegistered(registered)
+  }
+
+  public func isBackgroundHandlerRegistered() -> Bool {
+    RemoteReceiveHub.shared.isBackgroundHandlerRegistered()
+  }
+
+  /**
+   Post a local tray item from a received message's title/body/actions (optional promotion).
+   Body/action taps auto ACK opened via `handleNotificationResponse` (with actionId for actions).
+   */
+  public func presentNotification(_ event: RemoteMessageEvent) async throws {
+    _ = try requireConfigured()
+    let title = event.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    guard !title.isEmpty else {
+      throw ComRaidError.apiError("presentNotification requires a non-blank title")
+    }
+    let actionsJson: String? = {
+      guard !event.actions.isEmpty else { return nil }
+      let array: [[String: Any]] = event.actions.map { action in
+        var obj: [String: Any] = ["id": action.id, "text": action.text]
+        if let icon = action.icon { obj["icon"] = icon }
+        return obj
+      }
+      guard JSONSerialization.isValidJSONObject(array),
+            let data = try? JSONSerialization.data(withJSONObject: array),
+            let string = String(data: data, encoding: .utf8) else { return nil }
+      return string
+    }()
+    var payload = event.data
+    if let deliveryId = event.deliveryId { payload["cr_delivery_id"] = deliveryId }
+    if let attributionToken = event.attributionToken { payload["cr_attribution_token"] = attributionToken }
+    if let messageId = event.messageId { payload["cr_message_id"] = messageId }
+    payload["cr_title"] = title
+    payload["cr_body"] = event.body ?? ""
+    if let deepLink = event.deepLink { payload["cr_deep_link"] = deepLink }
+    if let actionsJson { payload["cr_actions"] = actionsJson }
+    try await RemoteNotificationDisplay.present(data: payload)
+  }
+
+  /// Present from raw APNs-shaped data map (title via `cr_title`).
+  public func presentNotification(data: [String: String]) async throws {
+    try await presentNotification(RemoteMessageMapper.toEvent(data))
+  }
+
+  /**
+   Presentation options for `userNotificationCenter(_:willPresent:…)`.
+   Data-only never presents; non–data-only follows `displayForegroundNotifications`.
+   */
+  public func presentationOptions(for userInfo: [AnyHashable: Any]) -> UNNotificationPresentationOptions {
+    presentationOptions(forData: PushPayload.fromUserInfo(userInfo))
+  }
+
+  public func presentationOptions(forData data: [String: String]) -> UNNotificationPresentationOptions {
+    let displayFg = configuration?.displayForegroundNotifications
+      ?? SdkConfigStore(suiteName: configuration?.storageSuiteName).load()?.displayForegroundNotifications
+      ?? true
+    return RemoteDisplayPolicy.presentationOptions(
+      data: data,
+      displayForegroundNotifications: displayFg
+    )
   }
 
   /**
@@ -244,11 +364,24 @@ public actor ComRaid {
   }
 
   /**
-   Process a remote notification payload: register action categories, enqueue delivered ACK.
+   Process a remote notification payload: register action categories, enqueue delivered ACK,
+   and notify foreground/background receive listeners. Does not mark opened (ADR 0006).
    Call from `UNUserNotificationCenterDelegate` / AppDelegate when a push arrives.
    */
-  public func handleRemoteNotification(userInfo: [AnyHashable: Any]) async {
-    let data = PushPayload.fromUserInfo(userInfo)
+  public func handleRemoteNotification(
+    userInfo: [AnyHashable: Any],
+    appInForeground: Bool = true
+  ) async {
+    await handleRemoteNotification(
+      data: PushPayload.fromUserInfo(userInfo),
+      appInForeground: appInForeground
+    )
+  }
+
+  public func handleRemoteNotification(
+    data: [String: String],
+    appInForeground: Bool = true
+  ) async {
     await RemoteNotificationDisplay.registerCategories(from: data)
     if let ackQueue {
       _ = await ackQueue.enqueueFromPayload(kind: .delivered, data: data)
@@ -256,14 +389,19 @@ public actor ComRaid {
     } else {
       await BackgroundAckHelpers.handleReceived(data: data)
     }
+    // Delivered ≠ opened: never auto-ACK opened on receive (ADR 0006).
+    RemoteReceiveHub.shared.notifyMessageReceived(
+      RemoteMessageMapper.toEvent(data),
+      appInForeground: appInForeground
+    )
   }
 
   /**
-   Process a notification response (tap / action). Enqueues opened ACK.
+   Process a notification response (tap / action). Enqueues opened ACK and notifies
+   opened listeners (including SDK-presented tray taps from `presentNotification`).
    Call from `userNotificationCenter(_:didReceive:withCompletionHandler:)`.
    */
   public func handleNotificationResponse(_ response: UNNotificationResponse) async {
-    let data = PushPayload.fromUserInfo(response.notification.request.content.userInfo)
     let actionId: String? = {
       switch response.actionIdentifier {
       case UNNotificationDefaultActionIdentifier, UNNotificationDismissActionIdentifier:
@@ -272,12 +410,37 @@ public actor ComRaid {
         return response.actionIdentifier
       }
     }()
+    await handleNotificationOpen(
+      userInfo: response.notification.request.content.userInfo,
+      actionId: actionId
+    )
+  }
+
+  /**
+   Process a notification open from raw `userInfo` + optional action id (ObjC / RN hosts).
+   */
+  public func handleNotificationOpen(
+    userInfo: [AnyHashable: Any],
+    actionId: String? = nil
+  ) async {
+    await handleNotificationOpen(data: PushPayload.fromUserInfo(userInfo), actionId: actionId)
+  }
+
+  public func handleNotificationOpen(
+    data: [String: String],
+    actionId: String? = nil
+  ) async {
+    let trimmedAction = actionId?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let resolvedAction = (trimmedAction?.isEmpty == false) ? trimmedAction : nil
     if let ackQueue {
-      _ = await ackQueue.enqueueFromPayload(kind: .opened, data: data, actionId: actionId)
+      _ = await ackQueue.enqueueFromPayload(kind: .opened, data: data, actionId: resolvedAction)
       await ackQueue.flush()
     } else {
-      await BackgroundAckHelpers.handleOpened(data: data, actionId: actionId)
+      await BackgroundAckHelpers.handleOpened(data: data, actionId: resolvedAction)
     }
+    RemoteReceiveHub.shared.notifyNotificationOpened(
+      RemoteMessageMapper.toEvent(data, actionId: resolvedAction)
+    )
   }
 
   public func optOut() async throws {

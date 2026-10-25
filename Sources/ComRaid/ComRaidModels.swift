@@ -13,17 +13,25 @@ public struct ComRaidConfiguration: Sendable, Equatable {
   /// Required for APNs Subscription register / token replace.
   public var apnsEnvironment: APNsEnvironment
   public var storageSuiteName: String?
+  /**
+   When true (default), non–data-only Notifications are shown by the SDK in the
+   foreground (`willPresent` returns banner options). Set false to handle alerts
+   only via receive listeners / `onMessage`.
+   */
+  public var displayForegroundNotifications: Bool
 
   public init(
     appId: String,
     apiBaseURL: URL = URL(string: "https://api.comraid.io")!,
     apnsEnvironment: APNsEnvironment,
-    storageSuiteName: String? = nil
+    storageSuiteName: String? = nil,
+    displayForegroundNotifications: Bool = true
   ) {
     self.appId = appId
     self.apiBaseURL = apiBaseURL
     self.apnsEnvironment = apnsEnvironment
     self.storageSuiteName = storageSuiteName
+    self.displayForegroundNotifications = displayForegroundNotifications
   }
 }
 
