@@ -73,7 +73,7 @@ Persists App ID / API base / APNs environment, sets up Keychain Subscription sto
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `configuration` | `ComRaidConfiguration` | `appId` (`cr_app_…`), optional `apiBaseURL` (default `https://api.comraid.io`), required `apnsEnvironment`, optional `storageSuiteName` |
+| `configuration` | `ComRaidConfiguration` | `appId` (`cr_app_…`), optional `apiBaseURL` (default `https://api.comraid.io`), required `apnsEnvironment`, optional `storageSuiteName`, optional `displayForegroundNotifications` (default `true`) |
 
 **Returns:** `Void`
 
@@ -83,13 +83,41 @@ Persists App ID / API base / APNs environment, sets up Keychain Subscription sto
 func setAPNsDeviceToken(_ tokenData: Data) async
 ```
 
-Stores the APNs device token from `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`.
+Stores the APNs device token from `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`. Also notifies `addTokenRefreshListener` subscribers.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `tokenData` | `Data` | Raw APNs device token |
 
 **Returns:** `Void`
+
+#### `getToken()`
+
+```swift
+func getToken() async throws -> String
+```
+
+Provider push token (APNs hex). Not a ComRaid Endpoint / Subscription id.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| — | — | — |
+
+**Returns:** `String` — APNs device token hex
+
+#### `getInitialNotification()`
+
+```swift
+func getInitialNotification() -> RemoteMessageEvent?
+```
+
+Cold-start tap payload, if any. Cleared after the first successful read.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| — | — | — |
+
+**Returns:** `RemoteMessageEvent?`
 
 #### `capabilities()`
 
@@ -235,30 +263,47 @@ Upserts Contact Attributes for the logged-in Contact (`PUT /mobile/subscriptions
 ### Remote notifications and ACKs
 
 ```swift
-await ComRaid.shared.handleRemoteNotification(userInfo: userInfo)
+await ComRaid.shared.handleRemoteNotification(userInfo: userInfo, appInForeground: true)
+let options = await ComRaid.shared.presentationOptions(for: userInfo)
 await ComRaid.shared.handleNotificationResponse(response)
+try await ComRaid.shared.presentNotification(event)
 await ComRaid.shared.acknowledgeDelivered(deliveryId: id, attributionToken: token)
 await ComRaid.shared.acknowledgeOpened(deliveryId: id, attributionToken: token, actionId: "accept")
 await ComRaid.shared.flushAcks()
 ```
 
-Delivered/opened ACKs use a durable UserDefaults queue that survives background delivery. `flushAcks` is safe on launch when `configure` has persisted.
+Delivered/opened ACKs use a durable UserDefaults queue that survives background delivery. `flushAcks` is safe on launch when `configure` has persisted. Receive never auto-marks opened (ADR 0006). Data-only Notifications (`cr_data_only`) never auto-present; use `presentNotification` for optional tray promotion.
 
-API `content.push.deep_link` arrives as `cr_deep_link` in `userInfo`. Read it in your open handler and navigate yourself — the SDK does **not** auto-open URLs. For standard APNs alerts, `sound`, `subtitle`, `badge`, and `thread-id` are applied by the system from the aps payload.
+API `content.push.deep_link` arrives as `cr_deep_link` in `userInfo`. Read it in your open handler and navigate yourself — the SDK does **not** auto-open URLs. For standard APNs alerts, `sound`, `subtitle`, `badge`, and `thread-id` are applied by the system from the aps payload. iOS data-only delivery is best-effort when the OS runs the app.
 
-#### `handleRemoteNotification(userInfo:)`
+#### `handleRemoteNotification(userInfo:appInForeground:)`
 
 ```swift
-func handleRemoteNotification(userInfo: [AnyHashable: Any]) async
+func handleRemoteNotification(userInfo: [AnyHashable: Any], appInForeground: Bool = true) async
 ```
 
-Registers action categories from `cr_*` payload keys and enqueues a delivered ACK.
+Registers action categories from `cr_*` payload keys, enqueues a delivered ACK, and notifies foreground/background receive listeners.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `userInfo` | `[AnyHashable: Any]` | Remote notification `userInfo` |
+| `appInForeground` | `Bool` | Routes the event to foreground vs background listeners |
+
+**Returns:** `Void`
+
+#### `presentationOptions(for:)`
+
+```swift
+func presentationOptions(for userInfo: [AnyHashable: Any]) -> UNNotificationPresentationOptions
+```
+
+Options for `userNotificationCenter(_:willPresent:…)`. Data-only never presents; non–data-only follows `displayForegroundNotifications`.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `userInfo` | `[AnyHashable: Any]` | Remote notification `userInfo` |
 
-**Returns:** `Void`
+**Returns:** `UNNotificationPresentationOptions`
 
 #### `handleNotificationResponse(_:)`
 
@@ -266,13 +311,55 @@ Registers action categories from `cr_*` payload keys and enqueues a delivered AC
 func handleNotificationResponse(_ response: UNNotificationResponse) async
 ```
 
-Enqueues an opened ACK (optional action button id from the response).
+Enqueues an opened ACK (optional action button id from the response) and notifies opened listeners (including taps on SDK-presented notifications).
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `response` | `UNNotificationResponse` | Tap / action response from the system |
 
 **Returns:** `Void`
+
+#### `handleNotificationOpen(userInfo:actionId:)`
+
+```swift
+func handleNotificationOpen(userInfo: [AnyHashable: Any], actionId: String? = nil) async
+```
+
+ObjC / RN-friendly open path equivalent to `handleNotificationResponse`.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `userInfo` | `[AnyHashable: Any]` | Notification `userInfo` |
+| `actionId` | `String?` | Optional action button id |
+
+**Returns:** `Void`
+
+#### `presentNotification(_:)` / `presentNotification(data:)`
+
+```swift
+func presentNotification(_ event: RemoteMessageEvent) async throws
+func presentNotification(data: [String: String]) async throws
+```
+
+Posts a local tray item from title/body/actions (optional promotion). Requires a non-blank title. Body/action taps flow through `handleNotificationResponse` / `handleNotificationOpen` and auto-ACK opened.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `event` / `data` | `RemoteMessageEvent` / `[String: String]` | Message to present |
+
+**Returns:** `Void`
+
+#### `addForegroundMessageListener` / `addBackgroundMessageListener` / `addNotificationOpenedListener` / `addTokenRefreshListener`
+
+Register receive/open/token listeners (tokens from `ComRaidListenerToken` for removal). Same event shape as React Native `onMessage` / background / opened / token refresh.
+
+#### `setBackgroundHandlerRegistered(_:)`
+
+```swift
+func setBackgroundHandlerRegistered(_ registered: Bool)
+```
+
+Marks that a JS background message handler is registered (RN). Receive still never auto-opens.
 
 #### `acknowledgeDelivered(deliveryId:attributionToken:)`
 
@@ -480,14 +567,18 @@ Use these to build `UNNotificationContent` and action categories from `cr_*` pay
 | `categories(from:)` | `[UNNotificationCategory]` | Action buttons from payload |
 | `categoryIdentifier(for:)` | `String` | Stable category id for a delivery |
 | `registerCategories(from:)` | `Void` (async) | Merges categories into `UNUserNotificationCenter` |
+| `present(data:)` | `Void` (async throws) | Post a local tray item immediately |
 
 ### Models
 
 | Type | Role |
 |------|------|
-| `ComRaidConfiguration` | App ID, API base URL, `APNsEnvironment`, optional storage suite |
+| `ComRaidConfiguration` | App ID, API base URL, `APNsEnvironment`, optional storage suite, `displayForegroundNotifications` |
 | `APNsEnvironment` | `.sandbox` / `.production` |
 | `DeviceProperties` | Subscription Properties for register / token refresh |
+| `RemoteMessageEvent` / `RemoteMessageAction` | RNFirebase-shaped receive/open payload |
+| `ComRaidListenerToken` | Opaque token for removing receive listeners |
+| `RemoteDisplayPolicy` | Foreground presentation options for data_only / alert |
 | `ComRaidNotification` | Local notification content |
 | `ComRaidScheduleRequest` | Local schedule (`notification` + `triggerDate`) |
 | `ComRaidCapabilities` / `ComRaidAuthorizationStatus` | Permission snapshot from `capabilities()` |
@@ -510,9 +601,9 @@ Public `ComRaidError` cases:
 
 ## Objective-C bridge
 
-`ComRaidObjCBridge` (`@objc(ComraidBridge)`) exposes a **subset** of the Swift API for React Native / ObjC hosts: configure, APNs token, permission, register, login/logout, opt-in/out, capabilities, schedule/cancel/pendingSchedules, `startTimer`, Attributes, and ACK helpers.
+`ComRaidObjCBridge` (`@objc(ComraidBridge)`) exposes a **subset** of the Swift API for React Native / ObjC hosts: configure (including `displayForegroundNotifications`), APNs token, permission, register, login/logout, opt-in/out, capabilities, schedule/cancel/pendingSchedules, `startTimer`, Attributes, ACK helpers, `getToken`, `getInitialNotification`, `presentNotification`, receive event emitter, and remote handle/presentation helpers.
 
-It does **not** mirror full Swift parity (for example timer pause/resume/list, `onPushTokenRefresh`, `setDeviceProperties`, `handleRemoteNotification` / `handleNotificationResponse`, or `RemoteNotificationDisplay`). Prefer the Swift `ComRaid` actor when possible.
+It does **not** mirror full Swift parity (for example timer pause/resume/list, `onPushTokenRefresh`, `setDeviceProperties`, or direct `RemoteNotificationDisplay` builders). Prefer the Swift `ComRaid` actor when possible.
 
 ## Not wrapped (HTTP-only)
 

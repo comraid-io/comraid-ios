@@ -58,4 +58,26 @@ public enum RemoteNotificationDisplay {
     }
     center.setNotificationCategories(Set(merged.values))
   }
+
+  /**
+   Post a local tray item immediately from `cr_*` payload keys (optional promotion).
+   Requires a non-blank `cr_title`.
+   */
+  public static func present(
+    data: [String: String],
+    notificationCenter: UNUserNotificationCenter = .current()
+  ) async throws {
+    let display = PushPayload.display(data)
+    let title = display.title.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !title.isEmpty else {
+      throw ComRaidError.invalidIdentifier
+    }
+    await registerCategories(from: data)
+    let content = content(from: data)
+    let deliveryId = data["cr_delivery_id"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let identifier = (deliveryId?.isEmpty == false ? deliveryId! : UUID().uuidString)
+    try await notificationCenter.add(
+      UNNotificationRequest(identifier: "comraid.present.\(identifier)", content: content, trigger: nil)
+    )
+  }
 }
