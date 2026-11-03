@@ -177,6 +177,35 @@ import Testing
   #expect(storage.get(queue.storageKey()) == nil)
 }
 
+@Test func testSendPayloadWithoutDeliveryIdsMakesNoAckRequest() async {
+  // Test sends omit cr_delivery_id / cr_attribution_token; receive still runs but must not ACK.
+  let storage = InMemoryAckQueueStore()
+  let transport = RecordingTransport()
+  let queue = AckQueue(
+    apiBaseURL: URL(string: "https://api.example.com")!,
+    store: storage,
+    transport: transport,
+    clock: { 1_000_000 }
+  )
+
+  let delivered = await queue.enqueueFromPayload(
+    kind: .delivered,
+    data: ["cr_title": "Test", "cr_body": "Hello"]
+  )
+  #expect(delivered == false)
+  #expect(storage.get(queue.storageKey()) == nil)
+  await queue.flush()
+  #expect(transport.requests.isEmpty)
+
+  let opened = await queue.enqueueFromPayload(
+    kind: .opened,
+    data: ["cr_delivery_id": "d-only"] // token missing
+  )
+  #expect(opened == false)
+  await queue.flush()
+  #expect(transport.requests.isEmpty)
+}
+
 private final class MutableClock: @unchecked Sendable {
   var now: Int64
   init(_ now: Int64) { self.now = now }
