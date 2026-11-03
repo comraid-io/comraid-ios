@@ -565,7 +565,7 @@ Use these to build `UNNotificationContent` and action categories from `cr_*` pay
 |--------|---------|---------|
 | `content(from:)` | `UNMutableNotificationContent` | Title/body/userInfo (+ category when actions present) |
 | `categories(from:)` | `[UNNotificationCategory]` | Action buttons from payload |
-| `categoryIdentifier(for:)` | `String` | Stable category id for a delivery |
+| `categoryIdentifier(for:)` | `String` | Fixed `comraid.actions` (matches server APNs category) |
 | `registerCategories(from:)` | `Void` (async) | Merges categories into `UNUserNotificationCenter` |
 | `present(data:)` | `Void` (async throws) | Post a local tray item immediately |
 

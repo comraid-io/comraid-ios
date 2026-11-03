@@ -3,6 +3,10 @@ import UserNotifications
 
 /// Builds UNNotification content and categories from ComRaid push data keys.
 public enum RemoteNotificationDisplay {
+  /// APNs category id the server sets on action-bearing alerts (`comraid.actions`).
+  /// Must match server `IOSActionsCategory` so remote pushes show their buttons.
+  public static let actionsCategoryIdentifier = "comraid.actions"
+
   public static func content(from data: [String: String]) -> UNMutableNotificationContent {
     let display = PushPayload.display(data)
     let content = UNMutableNotificationContent()
@@ -10,19 +14,15 @@ public enum RemoteNotificationDisplay {
     content.body = display.body
     content.userInfo = data
     content.sound = .default
-    if let deliveryId = data["cr_delivery_id"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-       !deliveryId.isEmpty,
-       !PushPayload.actions(data).isEmpty {
-      content.categoryIdentifier = categoryIdentifier(for: deliveryId)
+    if !PushPayload.actions(data).isEmpty {
+      content.categoryIdentifier = actionsCategoryIdentifier
     }
     return content
   }
 
   public static func categories(from data: [String: String]) -> [UNNotificationCategory] {
     let actions = PushPayload.actions(data)
-    guard !actions.isEmpty,
-          let deliveryId = data["cr_delivery_id"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-          !deliveryId.isEmpty else {
+    guard !actions.isEmpty else {
       return []
     }
     let unActions = actions.map { action in
@@ -34,7 +34,7 @@ public enum RemoteNotificationDisplay {
     }
     return [
       UNNotificationCategory(
-        identifier: categoryIdentifier(for: deliveryId),
+        identifier: actionsCategoryIdentifier,
         actions: unActions,
         intentIdentifiers: [],
         options: []
@@ -42,11 +42,18 @@ public enum RemoteNotificationDisplay {
     ]
   }
 
+  /// Category id for action-bearing pushes. Matches the server APNs/FCM category.
+  /// - Parameter deliveryId: Unused; kept for source compatibility with earlier per-delivery ids.
+  @available(*, deprecated, message: "Use actionsCategoryIdentifier; deliveryId is ignored")
   public static func categoryIdentifier(for deliveryId: String) -> String {
-    "comraid.\(deliveryId)"
+    _ = deliveryId
+    return actionsCategoryIdentifier
   }
 
   /// Register action categories with the system notification center.
+  /// Updates the shared `comraid.actions` category from the payload's buttons.
+  /// Background OS-drawn alerts only show buttons when this category was already
+  /// registered (for example after a prior present/register, or via an NSE).
   public static func registerCategories(from data: [String: String]) async {
     let next = categories(from: data)
     guard !next.isEmpty else { return }

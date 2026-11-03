@@ -69,5 +69,5 @@ import UserNotifications
   #expect(content.body == "Accept?")
   #expect(content.userInfo["cr_delivery_id"] as? String == "d1")
   #expect(content.userInfo["path"] as? String == "/rematch")
-  #expect(content.categoryIdentifier == "comraid.d1")
+  #expect(content.categoryIdentifier == "comraid.actions")
 }
