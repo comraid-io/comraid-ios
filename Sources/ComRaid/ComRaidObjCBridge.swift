@@ -378,6 +378,7 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
     }
   }
 
+  @available(iOSApplicationExtension, unavailable)
   @objc public func requestNotificationPermission(
     completion: @escaping @Sendable (Bool, NSError?) -> Void
   ) {

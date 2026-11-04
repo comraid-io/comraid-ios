@@ -588,7 +588,7 @@ final class NotificationService: UNNotificationServiceExtension {
 }
 ```
 
-Images are downloaded over http(s) with a 10 s timeout and a 5 MB cap (JPEG, PNG, GIF, HEIC); on failure the original content is shown. ObjC hosts can call `ComraidBridge.shared.enrichNotificationRequest(_:completion:)`.
+`ComRaid` is extension-safe: `requestPermission`, `requestAuthorization` and the bridge's `requestNotificationPermission` are unavailable in app extensions, and nothing else in the module needs `UIApplication`. Images are downloaded over http(s) with a 10 s timeout and a 5 MB cap (JPEG, PNG, GIF, HEIC); on failure the original content is shown. ObjC hosts can call `ComraidBridge.shared.enrichNotificationRequest(_:completion:)`.
 
 ### Models
 

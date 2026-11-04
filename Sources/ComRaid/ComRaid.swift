@@ -238,6 +238,8 @@ public actor ComRaid {
    Requests notification permission. When granted, asks the system for a remote notification token.
    Call `setAPNsDeviceToken` from AppDelegate, then `register()`.
    */
+  // Notification Service Extensions link this module; UIApplication.shared is app-only.
+  @available(iOSApplicationExtension, unavailable)
   @discardableResult
   public func requestPermission(options: UNAuthorizationOptions = [.alert, .badge, .sound]) async throws -> Bool {
     _ = try requireConfigured()
@@ -252,6 +254,7 @@ public actor ComRaid {
     return granted
   }
 
+  @available(iOSApplicationExtension, unavailable)
   @discardableResult
   public func requestAuthorization(options: UNAuthorizationOptions = [.alert, .badge, .sound]) async throws -> Bool {
     try await requestPermission(options: options)
