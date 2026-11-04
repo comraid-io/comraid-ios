@@ -172,6 +172,13 @@ public actor ComRaid {
    Body/action taps auto ACK opened via `handleNotificationResponse` (with actionId for actions).
    */
   public func presentNotification(_ event: RemoteMessageEvent) async throws {
+    try await presentNotification(event, presentationHints: [:])
+  }
+
+  private func presentNotification(
+    _ event: RemoteMessageEvent,
+    presentationHints: [String: String]
+  ) async throws {
     _ = try requireConfigured()
     let title = event.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     guard !title.isEmpty else {
@@ -197,12 +204,16 @@ public actor ComRaid {
     payload["cr_body"] = event.body ?? ""
     if let deepLink = event.deepLink { payload["cr_deep_link"] = deepLink }
     if let actionsJson { payload["cr_actions"] = actionsJson }
+    payload.merge(presentationHints) { current, _ in current }
     try await RemoteNotificationDisplay.present(data: payload)
   }
 
-  /// Present from raw APNs-shaped data map (title via `cr_title`).
+  /// Present from raw APNs-shaped data map (title via `cr_title`); keeps image/sound/badge/thread hints.
   public func presentNotification(data: [String: String]) async throws {
-    try await presentNotification(RemoteMessageMapper.toEvent(data))
+    try await presentNotification(
+      RemoteMessageMapper.toEvent(data),
+      presentationHints: PushPayload.presentationHints(data)
+    )
   }
 
   /**

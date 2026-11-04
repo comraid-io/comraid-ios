@@ -274,7 +274,7 @@ await ComRaid.shared.flushAcks()
 
 Delivered/opened ACKs use a durable UserDefaults queue that survives background delivery. `flushAcks` is safe on launch when `configure` has persisted. Receive never auto-marks opened (ADR 0006). Data-only Notifications (`cr_data_only`) never auto-present; use `presentNotification` for optional tray promotion.
 
-API `content.push.deep_link` arrives as `cr_deep_link` in `userInfo`. Read it in your open handler and navigate yourself — the SDK does **not** auto-open URLs. For standard APNs alerts, `sound`, `subtitle`, `badge`, and `thread-id` are applied by the system from the aps payload. iOS data-only delivery is best-effort when the OS runs the app.
+API `content.push.deep_link` arrives as `cr_deep_link` in `userInfo`. Read it in your open handler and navigate yourself — the SDK does **not** auto-open URLs. For standard APNs alerts, `sound`, `subtitle`, `badge`, and `thread-id` are applied by the system from the aps payload; `presentNotification(data:)` / `RemoteNotificationDisplay.present(data:)` apply `cr_sound`, `cr_badge`, `cr_thread_id` (or the matching `aps` fields) and attach `cr_image_url`. iOS data-only delivery is best-effort when the OS runs the app.
 
 #### `handleRemoteNotification(userInfo:appInForeground:)`
 
@@ -563,11 +563,32 @@ Use these to build `UNNotificationContent` and action categories from `cr_*` pay
 
 | Method | Returns | Purpose |
 |--------|---------|---------|
-| `content(from:)` | `UNMutableNotificationContent` | Title/body/userInfo (+ category when actions present) |
+| `content(from:)` | `UNMutableNotificationContent` | Title/body/userInfo, `cr_sound` / `cr_badge` / `cr_thread_id` (+ category when actions present) |
 | `categories(from:)` | `[UNNotificationCategory]` | Action buttons from payload |
 | `categoryIdentifier(for:)` | `String` | Fixed `comraid.actions` (matches server APNs category) |
 | `registerCategories(from:)` | `Void` (async) | Merges categories into `UNUserNotificationCenter` |
 | `present(data:)` | `Void` (async throws) | Post a local tray item immediately |
+| `enrich(_:)` | `UNNotificationContent` (async) | Notification Service Extension: attach `cr_image_url`, register `comraid.actions` buttons |
+
+#### Images and action buttons (Notification Service Extension)
+
+The server sets `mutable-content` when a push has an image or action buttons. iOS only shows the image (and, on a cold device, the buttons) when a Notification Service Extension adds them. Add an extension target that links `ComRaid`:
+
+```swift
+import ComRaid
+import UserNotifications
+
+final class NotificationService: UNNotificationServiceExtension {
+  override func didReceive(
+    _ request: UNNotificationRequest,
+    withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
+  ) {
+    Task { contentHandler(await RemoteNotificationDisplay.enrich(request)) }
+  }
+}
+```
+
+Images are downloaded over http(s) with a 10 s timeout and a 5 MB cap (JPEG, PNG, GIF, HEIC); on failure the original content is shown. ObjC hosts can call `ComraidBridge.shared.enrichNotificationRequest(_:completion:)`.
 
 ### Models
 
@@ -601,7 +622,7 @@ Public `ComRaidError` cases:
 
 ## Objective-C bridge
 
-`ComRaidObjCBridge` (`@objc(ComraidBridge)`) exposes a **subset** of the Swift API for React Native / ObjC hosts: configure (including `displayForegroundNotifications`), APNs token, permission, register, login/logout, opt-in/out, capabilities, schedule/cancel/pendingSchedules, `startTimer`, `setDeviceProperties`, Attributes, ACK helpers, `getToken`, `getInitialNotification`, `presentNotification`, receive event emitter, and remote handle/presentation helpers.
+`ComRaidObjCBridge` (`@objc(ComraidBridge)`) exposes a **subset** of the Swift API for React Native / ObjC hosts: configure (including `displayForegroundNotifications`), APNs token, permission, register, login/logout, opt-in/out, capabilities, schedule/cancel/pendingSchedules, `startTimer`, `setDeviceProperties`, Attributes, ACK helpers, `getToken`, `getInitialNotification`, `presentNotification`, `enrichNotificationRequest` (Notification Service Extension), receive event emitter, and remote handle/presentation helpers.
 
 It does **not** mirror full Swift parity (for example timer pause/resume/list, `onPushTokenRefresh`, or direct `RemoteNotificationDisplay` builders). Prefer the Swift `ComRaid` actor when possible.
 

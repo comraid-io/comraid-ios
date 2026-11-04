@@ -118,6 +118,18 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
     }
   }
 
+  /// Notification Service Extension helper; see `RemoteNotificationDisplay.enrich(_:)`.
+  @objc public func enrichNotificationRequest(
+    _ request: UNNotificationRequest,
+    completion: @escaping @Sendable (UNNotificationContent) -> Void
+  ) {
+    // UNNotificationRequest is immutable but not marked Sendable.
+    nonisolated(unsafe) let request = request
+    Task {
+      completion(await RemoteNotificationDisplay.enrich(request))
+    }
+  }
+
   @objc public func setBackgroundHandlerRegistered(
     _ registered: Bool,
     completion: @escaping @Sendable (NSError?) -> Void

@@ -15,6 +15,10 @@ struct PushDisplay: Equatable, Sendable {
   var title: String
   var body: String
   var imageUrl: String?
+  var sound: String?
+  var badge: Int?
+  /// `threadIdentifier` for grouping, from API `thread_id` (`cr_thread_id` / `aps.thread-id`).
+  var threadId: String?
 }
 
 enum PushPayload {
@@ -31,6 +35,10 @@ enum PushPayload {
     "cr_deep_link",
     "cr_actions",
     "cr_data_only",
+    "cr_sound",
+    "cr_badge",
+    "cr_thread_id",
+    "cr_priority",
   ]
 
   static func attribution(_ data: [String: String]?) -> DeliveryAttribution? {
@@ -74,8 +82,17 @@ enum PushPayload {
     return PushDisplay(
       title: data["cr_title"] ?? "",
       body: data["cr_body"] ?? "",
-      imageUrl: data["cr_image_url"]?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+      imageUrl: data["cr_image_url"]?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+      sound: data["cr_sound"]?.nilIfEmpty,
+      badge: data["cr_badge"]?.nilIfEmpty.flatMap { Int($0) }.flatMap { $0 >= 0 ? $0 : nil },
+      threadId: data["cr_thread_id"]?.nilIfEmpty
     )
+  }
+
+  /// Tray-only `cr_*` keys that `RemoteMessageEvent` drops but local presentation still needs.
+  static func presentationHints(_ data: [String: String]) -> [String: String] {
+    let keys: Set<String> = ["cr_image_url", "cr_sound", "cr_badge", "cr_thread_id"]
+    return data.filter { keys.contains($0.key) }
   }
 
   static func actions(_ data: [String: String]?) -> [PushAction] {
@@ -94,9 +111,19 @@ enum PushPayload {
     }
   }
 
-  /// Flatten APNs / UNNotification `userInfo` into string map; fill title/body from `aps.alert` when missing.
+  /**
+   Flatten APNs / UNNotification `userInfo` into string map; fill title/body from `aps.alert`
+   and sound/badge/thread from `aps` when the matching `cr_*` hint is missing.
+   */
   static func fromUserInfo(_ userInfo: [AnyHashable: Any]) -> [String: String] {
     var out = stringMap(userInfo)
+    if let aps = userInfo["aps"] as? [String: Any] {
+      // Critical alerts nest the sound name: `"sound": {"name": "x.caf", ...}`.
+      let sound = (aps["sound"] as? String) ?? ((aps["sound"] as? [String: Any])?["name"] as? String)
+      fillIfMissing(&out, "cr_sound", sound)
+      fillIfMissing(&out, "cr_badge", (aps["badge"] as? NSNumber)?.stringValue)
+      fillIfMissing(&out, "cr_thread_id", aps["thread-id"] as? String)
+    }
     if out["cr_title"] == nil || out["cr_title"]?.isEmpty == true {
       if let title = apsAlertString(userInfo, key: "title"), !title.isEmpty {
         out["cr_title"] = title
@@ -121,6 +148,11 @@ enum PushPayload {
       }
     }
     return out
+  }
+
+  private static func fillIfMissing(_ out: inout [String: String], _ key: String, _ value: String?) {
+    guard out[key]?.nilIfEmpty == nil, let value = value?.nilIfEmpty else { return }
+    out[key] = value
   }
 
   private static func apsAlertString(_ userInfo: [AnyHashable: Any], key: String) -> String? {
