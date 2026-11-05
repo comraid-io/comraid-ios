@@ -139,20 +139,3 @@ import Testing
   #expect(await RemoteNotificationDisplay.imageAttachment(from: "file:///etc/hosts") == nil)
   #expect(await RemoteNotificationDisplay.imageAttachment(from: "not a url") == nil)
 }
-
-@Test func presentationHintsKeepOnlyTrayKeys() {
-  let hints = PushPayload.presentationHints([
-    "cr_title": "Hello",
-    "cr_image_url": "https://img",
-    "cr_sound": "chime.caf",
-    "cr_badge": "1",
-    "cr_thread_id": "t",
-    "order_id": "42",
-  ])
-  #expect(hints == [
-    "cr_image_url": "https://img",
-    "cr_sound": "chime.caf",
-    "cr_badge": "1",
-    "cr_thread_id": "t",
-  ])
-}

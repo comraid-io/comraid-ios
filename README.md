@@ -274,7 +274,7 @@ await ComRaid.shared.flushAcks()
 
 Delivered/opened ACKs use a durable UserDefaults queue that survives background delivery. `flushAcks` is safe on launch when `configure` has persisted. Receive never auto-marks opened (ADR 0006). Data-only Notifications (`cr_data_only`) never auto-present; use `presentNotification` for optional tray promotion.
 
-API `content.push.deep_link` arrives as `cr_deep_link` in `userInfo`. Read it in your open handler and navigate yourself — the SDK does **not** auto-open URLs. For standard APNs alerts, `sound`, `subtitle`, `badge`, and `thread-id` are applied by the system from the aps payload; `presentNotification(data:)` / `RemoteNotificationDisplay.present(data:)` apply `cr_sound`, `cr_badge`, `cr_thread_id` (or the matching `aps` fields) and attach `cr_image_url`. iOS data-only delivery is best-effort when the OS runs the app.
+API `content.push.deep_link` arrives as `cr_deep_link` in `userInfo`. Read it in your open handler and navigate yourself — the SDK does **not** auto-open URLs. For standard APNs alerts, `sound`, `subtitle`, `badge`, and `thread-id` are applied by the system from the aps payload; `presentNotification` / `RemoteNotificationDisplay.present(data:)` apply `cr_sound`, `cr_badge`, `cr_thread_id` (or the matching `aps` fields) and attach `cr_image_url`. iOS data-only delivery is best-effort when the OS runs the app.
 
 #### `handleRemoteNotification(userInfo:appInForeground:)`
 
@@ -341,7 +341,7 @@ func presentNotification(_ event: RemoteMessageEvent) async throws
 func presentNotification(data: [String: String]) async throws
 ```
 
-Posts a local tray item from title/body/actions (optional promotion). Requires a non-blank title. Body/action taps flow through `handleNotificationResponse` / `handleNotificationOpen` and auto-ACK opened.
+Posts a local tray item from title/body/actions (optional promotion). Requires a non-blank title. Body/action taps flow through `handleNotificationResponse` / `handleNotificationOpen` and auto-ACK opened. The image, sound, badge and thread travel on the event (`imageUrl`, `sound`, `badge`, `threadId`), so either form applies them.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|

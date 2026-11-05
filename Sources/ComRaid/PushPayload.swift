@@ -89,12 +89,6 @@ enum PushPayload {
     )
   }
 
-  /// Tray-only `cr_*` keys that `RemoteMessageEvent` drops but local presentation still needs.
-  static func presentationHints(_ data: [String: String]) -> [String: String] {
-    let keys: Set<String> = ["cr_image_url", "cr_sound", "cr_badge", "cr_thread_id"]
-    return data.filter { keys.contains($0.key) }
-  }
-
   static func actions(_ data: [String: String]?) -> [PushAction] {
     guard let raw = data?["cr_actions"]?.trimmingCharacters(in: .whitespacesAndNewlines),
           !raw.isEmpty,

@@ -66,3 +66,27 @@ import Testing
   #expect(event.actions.count == 1)
   #expect(event.actions[0].id == "accept")
 }
+
+@Test func remoteMessageMapperCarriesPresentationFieldsOutsideData() {
+  let event = RemoteMessageMapper.toEvent([
+    "cr_title": "Hello",
+    "cr_image_url": "https://cdn.example.com/a.png",
+    "cr_sound": "chime.caf",
+    "cr_badge": "3",
+    "cr_thread_id": "order-42",
+    "order_id": "42",
+  ])
+  #expect(event.imageUrl == "https://cdn.example.com/a.png")
+  #expect(event.sound == "chime.caf")
+  #expect(event.badge == 3)
+  #expect(event.threadId == "order-42")
+  #expect(event.data == ["order_id": "42"])
+}
+
+@Test func remoteMessageMapperLeavesPresentationFieldsNilWhenAbsent() {
+  let event = RemoteMessageMapper.toEvent(["cr_title": "Hello", "cr_badge": "lots"])
+  #expect(event.imageUrl == nil)
+  #expect(event.sound == nil)
+  #expect(event.badge == nil)
+  #expect(event.threadId == nil)
+}

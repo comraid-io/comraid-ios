@@ -14,7 +14,11 @@ enum RemoteMessageMapper {
       actions: PushPayload.actions(data).map {
         RemoteMessageAction(id: $0.id, text: $0.text, icon: $0.icon)
       },
-      actionId: actionId?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+      actionId: actionId?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+      imageUrl: display.imageUrl,
+      sound: display.sound,
+      badge: display.badge,
+      threadId: display.threadId
     )
   }
 }
