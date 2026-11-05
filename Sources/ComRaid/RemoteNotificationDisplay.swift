@@ -15,6 +15,9 @@ public enum RemoteNotificationDisplay {
     let content = UNMutableNotificationContent()
     content.title = display.title
     content.body = display.body
+    if let subtitle = display.subtitle {
+      content.subtitle = subtitle
+    }
     content.userInfo = data
     content.sound = sound(named: display.sound)
     if let badge = display.badge {
@@ -143,7 +146,7 @@ public enum RemoteNotificationDisplay {
   /**
    Post a local tray item immediately from `cr_*` payload keys (optional promotion).
    Requires a non-blank `cr_title`. Applies `cr_sound`, `cr_badge`, `cr_thread_id`,
-   and attaches `cr_image_url` when it downloads.
+   `cr_subtitle`, and attaches `cr_image_url` when it downloads.
    */
   public static func present(
     data: [String: String],

@@ -101,21 +101,55 @@ import Testing
     "cr_sound": "chime",
     "cr_badge": "1",
     "cr_thread_id": "t",
+    "cr_subtitle": "Sub",
     "cr_priority": "normal",
   ])
   #expect(sender == ["order_id": "42"])
 }
 
-@Test func contentAppliesSoundBadgeAndThread() {
+@Test func fromUserInfoFillsPriorityFromApsHint() {
+  let data = PushPayload.fromUserInfo([
+    "aps": [
+      "alert": ["title": "T"],
+      "priority": 5,
+    ],
+  ])
+  #expect(data["cr_priority"] == "normal")
+}
+
+@Test func contentAppliesSoundBadgeThreadAndSubtitle() {
   let content = RemoteNotificationDisplay.content(from: [
     "cr_title": "Hello",
+    "cr_subtitle": "Order update",
     "cr_sound": "chime.caf",
     "cr_badge": "4",
     "cr_thread_id": "order-42",
   ])
+  #expect(content.subtitle == "Order update")
   #expect(content.sound == UNNotificationSound(named: UNNotificationSoundName("chime.caf")))
   #expect(content.badge == 4)
   #expect(content.threadIdentifier == "order-42")
+}
+
+@Test func contentFromEventPayloadAppliesPresentationFields() {
+  let event = RemoteMessageEvent(
+    title: "Hello",
+    body: "World",
+    subtitle: "Order update",
+    sound: "chime.caf",
+    badge: 2,
+    threadId: "order-42",
+    androidChannelId: "orders",
+    priority: "normal"
+  )
+  let content = RemoteNotificationDisplay.content(from: RemoteMessageMapper.toPayload(event))
+  #expect(content.title == "Hello")
+  #expect(content.subtitle == "Order update")
+  #expect(content.sound == UNNotificationSound(named: UNNotificationSoundName("chime.caf")))
+  #expect(content.badge == 2)
+  #expect(content.threadIdentifier == "order-42")
+  #expect(content.userInfo["cr_android_channel_id"] as? String == "orders")
+  #expect(content.userInfo["cr_priority"] as? String == "normal")
 }
 
 @Test func contentDefaultsToSystemSoundAndNoBadge() {

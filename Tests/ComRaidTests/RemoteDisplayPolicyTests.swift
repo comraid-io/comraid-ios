@@ -62,11 +62,13 @@ import UserNotifications
     "cr_attribution_token": "tok",
     "cr_title": "Rematch",
     "cr_body": "Accept?",
+    "cr_subtitle": "Now",
     "cr_actions": #"[{"id":"accept","text":"Accept"}]"#,
     "path": "/rematch",
   ])
   #expect(content.title == "Rematch")
   #expect(content.body == "Accept?")
+  #expect(content.subtitle == "Now")
   #expect(content.userInfo["cr_delivery_id"] as? String == "d1")
   #expect(content.userInfo["path"] as? String == "/rematch")
   #expect(content.categoryIdentifier == "comraid.actions")

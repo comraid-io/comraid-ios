@@ -4,7 +4,9 @@ import Foundation
  RNFirebase-shaped remote Notification event payload.
  `data` holds sender keys only (ComRaid `cr_*` reserved keys stripped).
  `attributionToken` is first-class so JS / presentNotification can ACK opened.
- `imageUrl` / `sound` / `badge` / `threadId` are first-class so `presentNotification` keeps them.
+ Presentation fields (`imageUrl`, `subtitle`, `sound`, `badge`, `threadId`,
+ `androidChannelId`, `priority`) are first-class so `presentNotification` keeps them.
+ `priority` is always `"high"` or `"normal"` on received events.
  */
 public struct RemoteMessageEvent: Sendable, Equatable {
   public var messageId: String?
@@ -17,9 +19,13 @@ public struct RemoteMessageEvent: Sendable, Equatable {
   public var actions: [RemoteMessageAction]
   public var actionId: String?
   public var imageUrl: String?
+  public var subtitle: String?
   public var sound: String?
   public var badge: Int?
   public var threadId: String?
+  public var androidChannelId: String?
+  /// Always `"high"` or `"normal"` on received events (default `"high"`).
+  public var priority: String
 
   public init(
     messageId: String? = nil,
@@ -32,9 +38,12 @@ public struct RemoteMessageEvent: Sendable, Equatable {
     actions: [RemoteMessageAction] = [],
     actionId: String? = nil,
     imageUrl: String? = nil,
+    subtitle: String? = nil,
     sound: String? = nil,
     badge: Int? = nil,
-    threadId: String? = nil
+    threadId: String? = nil,
+    androidChannelId: String? = nil,
+    priority: String = "high"
   ) {
     self.messageId = messageId
     self.deliveryId = deliveryId
@@ -46,9 +55,17 @@ public struct RemoteMessageEvent: Sendable, Equatable {
     self.actions = actions
     self.actionId = actionId
     self.imageUrl = imageUrl
+    self.subtitle = subtitle
     self.sound = sound
     self.badge = badge
     self.threadId = threadId
+    self.androidChannelId = androidChannelId
+    self.priority = Self.normalizedPriority(priority)
+  }
+
+  static func normalizedPriority(_ raw: String?) -> String {
+    let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    return trimmed == "normal" ? "normal" : "high"
   }
 }
 
