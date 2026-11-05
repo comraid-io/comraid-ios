@@ -87,6 +87,16 @@ import Testing
   #expect(bridge.contains("ComRaid.shared.getToken"))
   #expect(bridge.contains("ComRaid.shared.presentNotification"))
 }
+
+@Test func objcBridgeCarriesPresentationFieldsOnRemoteMessage() throws {
+  let bridge = try String(
+    contentsOf: packageRoot().appendingPathComponent("Sources/ComRaid/ComRaidObjCBridge.swift"),
+    encoding: .utf8
+  )
+  for key in ["imageUrl", "subtitle", "sound", "badge", "threadId", "androidChannelId", "priority"] {
+    #expect(bridge.contains("\"\(key)\""), "bridge must carry \(key)")
+  }
+}
 private func packageRoot() -> URL {
   URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent() // ComRaidTests
