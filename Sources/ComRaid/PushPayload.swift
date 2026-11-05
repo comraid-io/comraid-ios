@@ -15,10 +15,14 @@ struct PushDisplay: Equatable, Sendable {
   var title: String
   var body: String
   var imageUrl: String?
+  var subtitle: String?
   var sound: String?
   var badge: Int?
   /// `threadIdentifier` for grouping, from API `thread_id` (`cr_thread_id` / `aps.thread-id`).
   var threadId: String?
+  var androidChannelId: String?
+  /// Always `"high"` or `"normal"` (default `"high"`).
+  var priority: String
 }
 
 enum PushPayload {
@@ -31,6 +35,7 @@ enum PushPayload {
     "cr_title",
     "cr_body",
     "cr_image_url",
+    "cr_subtitle",
     "cr_android_channel_id",
     "cr_deep_link",
     "cr_actions",
@@ -78,14 +83,19 @@ enum PushPayload {
   }
 
   static func display(_ data: [String: String]?) -> PushDisplay {
-    guard let data else { return PushDisplay(title: "", body: "") }
+    guard let data else {
+      return PushDisplay(title: "", body: "", priority: "high")
+    }
     return PushDisplay(
       title: data["cr_title"] ?? "",
       body: data["cr_body"] ?? "",
       imageUrl: data["cr_image_url"]?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+      subtitle: data["cr_subtitle"]?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
       sound: data["cr_sound"]?.nilIfEmpty,
       badge: data["cr_badge"]?.nilIfEmpty.flatMap { Int($0) }.flatMap { $0 >= 0 ? $0 : nil },
-      threadId: data["cr_thread_id"]?.nilIfEmpty
+      threadId: data["cr_thread_id"]?.nilIfEmpty,
+      androidChannelId: data["cr_android_channel_id"]?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+      priority: RemoteMessageEvent.normalizedPriority(data["cr_priority"])
     )
   }
 
@@ -106,8 +116,8 @@ enum PushPayload {
   }
 
   /**
-   Flatten APNs / UNNotification `userInfo` into string map; fill title/body from `aps.alert`
-   and sound/badge/thread from `aps` when the matching `cr_*` hint is missing.
+   Flatten APNs / UNNotification `userInfo` into string map; fill title/body/subtitle from
+   `aps.alert` and sound/badge/thread from `aps` when the matching `cr_*` hint is missing.
    */
   static func fromUserInfo(_ userInfo: [AnyHashable: Any]) -> [String: String] {
     var out = stringMap(userInfo)
@@ -117,6 +127,12 @@ enum PushPayload {
       fillIfMissing(&out, "cr_sound", sound)
       fillIfMissing(&out, "cr_badge", (aps["badge"] as? NSNumber)?.stringValue)
       fillIfMissing(&out, "cr_thread_id", aps["thread-id"] as? String)
+      // APNs HTTP `apns-priority` is not in userInfo; FCM may mirror it as a numeric hint.
+      if let hint = aps["priority"] as? NSNumber {
+        fillIfMissing(&out, "cr_priority", hint.intValue >= 10 ? "high" : "normal")
+      } else if let hint = aps["priority"] as? String {
+        fillIfMissing(&out, "cr_priority", hint)
+      }
     }
     if out["cr_title"] == nil || out["cr_title"]?.isEmpty == true {
       if let title = apsAlertString(userInfo, key: "title"), !title.isEmpty {
@@ -126,6 +142,11 @@ enum PushPayload {
     if out["cr_body"] == nil || out["cr_body"]?.isEmpty == true {
       if let body = apsAlertString(userInfo, key: "body"), !body.isEmpty {
         out["cr_body"] = body
+      }
+    }
+    if out["cr_subtitle"] == nil || out["cr_subtitle"]?.isEmpty == true {
+      if let subtitle = apsAlertString(userInfo, key: "subtitle"), !subtitle.isEmpty {
+        out["cr_subtitle"] = subtitle
       }
     }
     return out

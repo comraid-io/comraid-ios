@@ -177,31 +177,7 @@ public actor ComRaid {
     guard !title.isEmpty else {
       throw ComRaidError.apiError("presentNotification requires a non-blank title")
     }
-    let actionsJson: String? = {
-      guard !event.actions.isEmpty else { return nil }
-      let array: [[String: Any]] = event.actions.map { action in
-        var obj: [String: Any] = ["id": action.id, "text": action.text]
-        if let icon = action.icon { obj["icon"] = icon }
-        return obj
-      }
-      guard JSONSerialization.isValidJSONObject(array),
-            let data = try? JSONSerialization.data(withJSONObject: array),
-            let string = String(data: data, encoding: .utf8) else { return nil }
-      return string
-    }()
-    var payload = event.data
-    if let deliveryId = event.deliveryId { payload["cr_delivery_id"] = deliveryId }
-    if let attributionToken = event.attributionToken { payload["cr_attribution_token"] = attributionToken }
-    if let messageId = event.messageId { payload["cr_message_id"] = messageId }
-    payload["cr_title"] = title
-    payload["cr_body"] = event.body ?? ""
-    if let deepLink = event.deepLink { payload["cr_deep_link"] = deepLink }
-    if let actionsJson { payload["cr_actions"] = actionsJson }
-    if let imageUrl = event.imageUrl { payload["cr_image_url"] = imageUrl }
-    if let sound = event.sound { payload["cr_sound"] = sound }
-    if let badge = event.badge { payload["cr_badge"] = String(badge) }
-    if let threadId = event.threadId { payload["cr_thread_id"] = threadId }
-    try await RemoteNotificationDisplay.present(data: payload)
+    try await RemoteNotificationDisplay.present(data: RemoteMessageMapper.toPayload(event))
   }
 
   /// Present from raw APNs-shaped data map (title via `cr_title`).

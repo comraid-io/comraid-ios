@@ -274,7 +274,7 @@ await ComRaid.shared.flushAcks()
 
 Delivered/opened ACKs use a durable UserDefaults queue that survives background delivery. `flushAcks` is safe on launch when `configure` has persisted. Receive never auto-marks opened (ADR 0006). Data-only Notifications (`cr_data_only`) never auto-present; use `presentNotification` for optional tray promotion.
 
-API `content.push.deep_link` arrives as `cr_deep_link` in `userInfo`. Read it in your open handler and navigate yourself — the SDK does **not** auto-open URLs. For standard APNs alerts, `sound`, `subtitle`, `badge`, and `thread-id` are applied by the system from the aps payload; `presentNotification` / `RemoteNotificationDisplay.present(data:)` apply `cr_sound`, `cr_badge`, `cr_thread_id` (or the matching `aps` fields) and attach `cr_image_url`. iOS data-only delivery is best-effort when the OS runs the app.
+API `content.push.deep_link` arrives as `cr_deep_link` in `userInfo`. Read it in your open handler and navigate yourself — the SDK does **not** auto-open URLs. For standard APNs alerts, `sound`, `subtitle`, `badge`, and `thread-id` are applied by the system from the aps payload; `presentNotification` / `RemoteNotificationDisplay.present(data:)` apply `cr_sound`, `cr_badge`, `cr_thread_id`, `cr_subtitle` (or the matching `aps` / `aps.alert` fields) and attach `cr_image_url`. Received events also carry `androidChannelId` and `priority` (`high` / `normal`) when present in the payload. iOS data-only delivery is best-effort when the OS runs the app.
 
 #### `handleRemoteNotification(userInfo:appInForeground:)`
 
@@ -341,7 +341,7 @@ func presentNotification(_ event: RemoteMessageEvent) async throws
 func presentNotification(data: [String: String]) async throws
 ```
 
-Posts a local tray item from title/body/actions (optional promotion). Requires a non-blank title. Body/action taps flow through `handleNotificationResponse` / `handleNotificationOpen` and auto-ACK opened. The image, sound, badge and thread travel on the event (`imageUrl`, `sound`, `badge`, `threadId`), so either form applies them.
+Posts a local tray item from title/body/actions (optional promotion). Requires a non-blank title. Body/action taps flow through `handleNotificationResponse` / `handleNotificationOpen` and auto-ACK opened. Presentation fields travel on the event (`imageUrl`, `subtitle`, `sound`, `badge`, `threadId`, `androidChannelId`, `priority`), so either form applies them (iOS draws image, subtitle, sound, badge and thread; `androidChannelId` is carried for parity and not drawn).
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -563,7 +563,7 @@ Use these to build `UNNotificationContent` and action categories from `cr_*` pay
 
 | Method | Returns | Purpose |
 |--------|---------|---------|
-| `content(from:)` | `UNMutableNotificationContent` | Title/body/userInfo, `cr_sound` / `cr_badge` / `cr_thread_id` (+ category when actions present) |
+| `content(from:)` | `UNMutableNotificationContent` | Title/body/subtitle/userInfo, `cr_sound` / `cr_badge` / `cr_thread_id` (+ category when actions present) |
 | `categories(from:)` | `[UNNotificationCategory]` | Action buttons from payload |
 | `categoryIdentifier(for:)` | `String` | Fixed `comraid.actions` (matches server APNs category) |
 | `registerCategories(from:)` | `Void` (async) | Merges categories into `UNUserNotificationCenter` |
@@ -597,7 +597,7 @@ final class NotificationService: UNNotificationServiceExtension {
 | `ComRaidConfiguration` | App ID, API base URL, `APNsEnvironment`, optional storage suite, `displayForegroundNotifications` |
 | `APNsEnvironment` | `.sandbox` / `.production` |
 | `DeviceProperties` | Subscription Properties for register / token refresh |
-| `RemoteMessageEvent` / `RemoteMessageAction` | RNFirebase-shaped receive/open payload |
+| `RemoteMessageEvent` / `RemoteMessageAction` | RNFirebase-shaped receive/open payload (`imageUrl`, `subtitle`, `sound`, `badge`, `threadId`, `androidChannelId`, `priority`) |
 | `ComRaidListenerToken` | Opaque token for removing receive listeners |
 | `RemoteDisplayPolicy` | Foreground presentation options for data_only / alert |
 | `ComRaidNotification` | Local notification content |

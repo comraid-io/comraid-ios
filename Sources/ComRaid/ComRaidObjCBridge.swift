@@ -232,9 +232,14 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
     if let deepLink = event.deepLink { result["deepLink"] = deepLink }
     if let actionId = event.actionId { result["actionId"] = actionId }
     if let imageUrl = event.imageUrl { result["imageUrl"] = imageUrl }
+    if let subtitle = event.subtitle { result["subtitle"] = subtitle }
     if let sound = event.sound { result["sound"] = sound }
     if let badge = event.badge { result["badge"] = badge }
     if let threadId = event.threadId { result["threadId"] = threadId }
+    if let androidChannelId = event.androidChannelId {
+      result["androidChannelId"] = androidChannelId
+    }
+    result["priority"] = event.priority
     result["data"] = event.data as NSDictionary
     if !event.actions.isEmpty {
       result["actions"] = event.actions.map { action -> NSDictionary in
@@ -294,9 +299,12 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
       actions: actions,
       actionId: string("actionId"),
       imageUrl: string("imageUrl"),
+      subtitle: string("subtitle"),
       sound: string("sound"),
       badge: (json["badge"] as? NSNumber).map(\.intValue).flatMap { $0 >= 0 ? $0 : nil },
-      threadId: string("threadId")
+      threadId: string("threadId"),
+      androidChannelId: string("androidChannelId"),
+      priority: string("priority") ?? "high"
     )
   }
 
