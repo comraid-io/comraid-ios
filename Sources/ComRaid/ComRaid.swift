@@ -420,7 +420,10 @@ public actor ComRaid {
       _ = await ackQueue.enqueueFromPayload(kind: .delivered, data: data)
       await ackQueue.flush()
     } else {
-      await BackgroundAckHelpers.handleReceived(data: data)
+      await BackgroundAckHelpers.handleReceived(
+        data: data,
+        storageSuiteName: configuration?.storageSuiteName
+      )
     }
     // Delivered ≠ opened: never auto-ACK opened on receive (ADR 0006).
     RemoteReceiveHub.shared.notifyMessageReceived(
@@ -469,7 +472,11 @@ public actor ComRaid {
       _ = await ackQueue.enqueueFromPayload(kind: .opened, data: data, actionId: resolvedAction)
       await ackQueue.flush()
     } else {
-      await BackgroundAckHelpers.handleOpened(data: data, actionId: resolvedAction)
+      await BackgroundAckHelpers.handleOpened(
+        data: data,
+        actionId: resolvedAction,
+        storageSuiteName: configuration?.storageSuiteName
+      )
     }
     RemoteReceiveHub.shared.notifyNotificationOpened(
       RemoteMessageMapper.toEvent(data, actionId: resolvedAction)
