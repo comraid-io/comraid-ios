@@ -152,12 +152,13 @@ extension ComRaidError {
     case .notConfigured: return 1
     case .notReady: return 2
     case .invalidIdentifier: return 3
-    case .triggerMustBeInFuture: return 4
-    case .timerNotFound: return 5
-    case .timerNotPaused: return 6
-    case .persistenceFailed: return 7
-    case .apiError: return 8
-    case .tokenTimeout: return 9
+    case .invalidConfiguration: return 4
+    case .triggerMustBeInFuture: return 5
+    case .timerNotFound: return 6
+    case .timerNotPaused: return 7
+    case .persistenceFailed: return 8
+    case .apiError: return 9
+    case .tokenTimeout: return 10
     }
   }
 
@@ -169,6 +170,8 @@ extension ComRaidError {
       return "ComRaid is not ready"
     case .invalidIdentifier:
       return "Invalid identifier"
+    case .invalidConfiguration(let message):
+      return message
     case .triggerMustBeInFuture:
       return "Trigger must be in the future"
     case .timerNotFound:

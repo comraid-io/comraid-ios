@@ -11,7 +11,7 @@ import Testing
   )
   let apns = StoredAPNsTokenProvider()
   let comraid = ComRaid()
-  await comraid.configureForTests(
+  try await comraid.configureForTests(
     .init(appId: "cr_app_test", apnsEnvironment: .sandbox),
     transport: transport,
     tokenProvider: apns,
@@ -41,7 +41,7 @@ import Testing
   let transport = WaitRecordingTransport()
   let apns = StoredAPNsTokenProvider()
   let comraid = ComRaid()
-  await comraid.configureForTests(
+  try await comraid.configureForTests(
     .init(appId: "cr_app_test", apnsEnvironment: .sandbox),
     transport: transport,
     tokenProvider: apns,
@@ -64,7 +64,7 @@ import Testing
   )
   let apns = StoredAPNsTokenProvider()
   let comraid = ComRaid()
-  await comraid.configureForTests(
+  try await comraid.configureForTests(
     .init(appId: "cr_app_test", apnsEnvironment: .sandbox),
     transport: transport,
     tokenProvider: apns,
