@@ -39,17 +39,21 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
     }
     let baseURL = apiBaseURL.flatMap { URL(string: $0) } ?? URL(string: "https://api.comraid.io")!
     Task {
-      await ComRaid.shared.configure(
-        .init(
-          appId: appId,
-          apiBaseURL: baseURL,
-          apnsEnvironment: env,
-          storageSuiteName: configuredSuite,
-          displayForegroundNotifications: displayForegroundNotifications
+      do {
+        try await ComRaid.shared.configure(
+          .init(
+            appId: appId,
+            apiBaseURL: baseURL,
+            apnsEnvironment: env,
+            storageSuiteName: configuredSuite,
+            displayForegroundNotifications: displayForegroundNotifications
+          )
         )
-      )
-      self.attachReceiveListenersIfNeeded()
-      completion(nil)
+        self.attachReceiveListenersIfNeeded()
+        completion(nil)
+      } catch {
+        completion(error as NSError)
+      }
     }
   }
 
@@ -329,6 +333,19 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
     }
   }
 
+  @objc public func onPushTokenRefresh(
+    completion: @escaping @Sendable (NSError?) -> Void
+  ) {
+    Task {
+      do {
+        try await ComRaid.shared.onPushTokenRefresh()
+        completion(nil)
+      } catch {
+        completion(error as NSError)
+      }
+    }
+  }
+
   @objc public func register(completion: @escaping @Sendable (NSError?) -> Void) {
     Task {
       do {
@@ -409,9 +426,23 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
   @objc public func requestNotificationPermission(
     completion: @escaping @Sendable (Bool, NSError?) -> Void
   ) {
+    requestNotificationPermission(options: ["alert", "badge", "sound"], completion: completion)
+  }
+
+  /**
+   Requests notification permission with explicit options.
+   Recognized option strings: `alert`, `badge`, `sound`, `provisional`, `carPlay`,
+   `criticalAlert`, `providesAppNotificationSettings`, `announcement`.
+   */
+  @available(iOSApplicationExtension, unavailable)
+  @objc public func requestNotificationPermission(
+    options: [String],
+    completion: @escaping @Sendable (Bool, NSError?) -> Void
+  ) {
+    let authorizationOptions = Self.authorizationOptions(options)
     Task {
       do {
-        completion(try await ComRaid.shared.requestPermission(), nil)
+        completion(try await ComRaid.shared.requestPermission(options: authorizationOptions), nil)
       } catch {
         completion(false, error as NSError)
       }
@@ -491,6 +522,59 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
           "triggerAtMillis": (timer.targetDate?.timeIntervalSince1970 ?? 0) * 1_000,
           "fallbackReason": fallbackReason,
         ], nil)
+      } catch {
+        completion(nil, error as NSError)
+      }
+    }
+  }
+
+  @objc public func pauseTimer(
+    id: String,
+    completion: @escaping @Sendable (NSDictionary?, NSError?) -> Void
+  ) {
+    Task {
+      do {
+        completion(Self.timerDictionary(try await ComRaid.shared.pauseTimer(id: id)), nil)
+      } catch {
+        completion(nil, error as NSError)
+      }
+    }
+  }
+
+  @objc public func resumeTimer(
+    id: String,
+    completion: @escaping @Sendable (NSDictionary?, NSError?) -> Void
+  ) {
+    Task {
+      do {
+        completion(Self.timerDictionary(try await ComRaid.shared.resumeTimer(id: id)), nil)
+      } catch {
+        completion(nil, error as NSError)
+      }
+    }
+  }
+
+  @objc public func cancelTimer(
+    id: String,
+    completion: @escaping @Sendable (NSError?) -> Void
+  ) {
+    Task {
+      do {
+        try await ComRaid.shared.cancelTimer(id: id)
+        completion(nil)
+      } catch {
+        completion(error as NSError)
+      }
+    }
+  }
+
+  @objc public func timers(
+    completion: @escaping @Sendable (NSArray?, NSError?) -> Void
+  ) {
+    Task {
+      do {
+        let values = try await ComRaid.shared.timers().map(Self.timerDictionary)
+        completion(values as NSArray, nil)
       } catch {
         completion(nil, error as NSError)
       }
@@ -659,6 +743,39 @@ private extension String {
 }
 
 extension ComRaidObjCBridge {
+  private static func timerDictionary(_ timer: ComRaidTimer) -> NSDictionary {
+    [
+      "id": timer.id,
+      "title": timer.notification.title,
+      "body": timer.notification.body,
+      "state": timer.state.rawValue,
+      "triggerAtMillis": (timer.targetDate?.timeIntervalSince1970 ?? 0) * 1_000,
+      "remainingDurationMs": timer.remainingDuration * 1_000,
+    ] as NSDictionary
+  }
+
+  private static func authorizationOptions(_ names: [String]) -> UNAuthorizationOptions {
+    var options: UNAuthorizationOptions = []
+    for name in names {
+      switch name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+      case "alert": options.insert(.alert)
+      case "badge": options.insert(.badge)
+      case "sound": options.insert(.sound)
+      case "provisional": options.insert(.provisional)
+      case "carplay": options.insert(.carPlay)
+      case "criticalalert": options.insert(.criticalAlert)
+      case "providesappnotificationsettings": options.insert(.providesAppNotificationSettings)
+      case "announcement":
+        if #available(iOS 15.0, *) {
+          options.insert(.announcement)
+        }
+      default:
+        break
+      }
+    }
+    return options.isEmpty ? [.alert, .badge, .sound] : options
+  }
+
   private func precisionFallback(
     requestedPrecision: String,
     fallbackPolicy: String

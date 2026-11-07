@@ -120,6 +120,7 @@ public enum ComRaidError: Error, Sendable, Equatable {
   case notConfigured
   case notReady
   case invalidIdentifier
+  case invalidConfiguration(String)
   case triggerMustBeInFuture
   case timerNotFound
   case timerNotPaused
