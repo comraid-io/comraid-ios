@@ -9,12 +9,19 @@ typealias DeviceInfoProvider = @Sendable () -> DeviceProperties
 enum SystemDeviceInfo {
   static func collect(sdkVersion: String = SdkVersion.value) -> DeviceProperties {
     let locale = Locale.current
-    let languageCode = locale.language.languageCode?.identifier
-    let regionCode = locale.region?.identifier
+    let languageCode: String?
+    let regionCode: String?
+    if #available(iOS 16, *) {
+      languageCode = locale.language.languageCode?.identifier
+      regionCode = locale.region?.identifier
+    } else {
+      languageCode = locale.languageCode
+      regionCode = locale.regionCode
+    }
     let localeTag = locale.identifier.replacingOccurrences(of: "_", with: "-")
     #if canImport(UIKit) && !os(watchOS)
-    let model = deviceModelIdentifier()
-    let osVersion = UIDevice.current.systemVersion
+    let model: String? = deviceModelIdentifier()
+    let osVersion: String? = UIDevice.current.systemVersion
     let osName = UIDevice.current.systemName
     #else
     let model: String? = nil

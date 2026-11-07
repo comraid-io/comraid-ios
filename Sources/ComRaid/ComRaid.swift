@@ -572,8 +572,15 @@ public actor ComRaid {
   }
 
   public func capabilities() async -> ComRaidCapabilities {
-    let settings = await notificationCenter.notificationSettings()
-    let status: ComRaidAuthorizationStatus = switch settings.authorizationStatus {
+    // Extract Sendable fields in the notification-center callback so UNNotificationSettings
+    // (non-Sendable) never crosses isolation under Swift 6.
+    let (authorizationStatus, alertSetting) = await withCheckedContinuation {
+      (continuation: CheckedContinuation<(UNAuthorizationStatus, UNNotificationSetting), Never>) in
+      notificationCenter.getNotificationSettings { settings in
+        continuation.resume(returning: (settings.authorizationStatus, settings.alertSetting))
+      }
+    }
+    let status: ComRaidAuthorizationStatus = switch authorizationStatus {
     case .notDetermined: .notDetermined
     case .denied: .denied
     case .authorized: .authorized
@@ -581,7 +588,7 @@ public actor ComRaid {
     case .ephemeral: .ephemeral
     @unknown default: .unknown
     }
-    let enabled = settings.alertSetting == .enabled || settings.authorizationStatus == .provisional
+    let enabled = alertSetting == .enabled || authorizationStatus == .provisional
     return ComRaidCapabilities(authorizationStatus: status, notificationsEnabled: enabled)
   }
 
