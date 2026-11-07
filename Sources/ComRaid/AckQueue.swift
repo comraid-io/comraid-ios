@@ -23,8 +23,9 @@ struct QueuedAck: Equatable, Sendable {
 /// without a foreground `ComRaid` init in this process lifetime.
 ///
 /// Enqueue and flush are serialized by the actor. At most one flush performs network
-/// I/O at a time; items claimed for a flush are removed from the store before `await send`
-/// so reentrant enqueues across suspension points survive the final save.
+/// I/O at a time. Claimed items stay in the durable store until SUCCESS/DROP so a
+/// process death mid-send can re-flush on restart; reentrant enqueues across
+/// suspension points are merged on the final save.
 actor AckQueue {
   private let store: any AckQueueStore
   private let transport: any HttpTransport
@@ -119,9 +120,9 @@ actor AckQueue {
       return
     }
 
-    let readyKeys = Set(ready.map(eventKey))
-    // Claim ready items before any await so reentrant enqueues keep their rows.
-    save(items.filter { !readyKeys.contains(eventKey($0)) })
+    // Keep claimed items durable until SUCCESS/DROP so a process death mid-send
+    // can re-flush on restart. Concurrent flushes are blocked by flushInFlight;
+    // reentrant enqueues across await are merged below.
 
     var retries: [QueuedAck] = []
     var finished: [QueuedAck] = []
@@ -150,8 +151,11 @@ actor AckQueue {
     for event in finished {
       markSent(event, now: mergeNow)
     }
+    let finishedKeys = Set(finished.map(eventKey))
 
     var remaining = load().filter { mergeNow - $0.enqueuedAt <= maxAgeMs }
+    // Drop only items this flush finished; leave concurrent enqueues and unfinished claims.
+    remaining = remaining.filter { !finishedKeys.contains(eventKey($0)) }
     for retry in retries {
       if wasSentRecently(retry, now: mergeNow) { continue }
       let key = eventKey(retry)

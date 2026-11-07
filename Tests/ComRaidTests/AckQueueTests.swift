@@ -303,6 +303,51 @@ import Testing
   #expect(transport.requests.count == 1)
 }
 
+@Test func claimedAckStaysDurableUntilSendSucceedsAndSurvivesCrashWindow() async {
+  let storage = InMemoryAckQueueStore()
+  let gate = AsyncGate()
+  let gated = GatedTransport(gate: gate)
+  let midFlight = AckQueue(
+    apiBaseURL: URL(string: "https://api.example.com")!,
+    store: storage,
+    transport: gated,
+    clock: { 1_000_000 }
+  )
+  _ = await midFlight.enqueueFromPayload(
+    kind: .delivered,
+    data: ["cr_delivery_id": "d-crash", "cr_attribution_token": "t"]
+  )
+
+  async let flushDone: Void = midFlight.flush()
+  await gate.waitUntilEntered()
+
+  // Process-death window: claimed for send but not yet accepted — still durable.
+  let midFlightRaw = storage.get(midFlight.storageKey())!
+  let midFlightItems = try! JSONSerialization.jsonObject(with: Data(midFlightRaw.utf8)) as! [[String: Any]]
+  #expect(midFlightItems.count == 1)
+  #expect(midFlightItems[0]["deliveryId"] as? String == "d-crash")
+
+  // Snapshot mid-flight, then finish the in-process flush so a new AckQueue can
+  // flush (a real crash starts a new process with a clear in-flight flag).
+  let snapshot = InMemoryAckQueueStore()
+  snapshot.set(midFlight.storageKey(), value: midFlightRaw)
+  await gate.open()
+  await flushDone
+
+  let restartTransport = RecordingTransport()
+  restartTransport.nextResponse = HttpResponse(statusCode: 200, body: Data("{}".utf8))
+  let restarted = AckQueue(
+    apiBaseURL: URL(string: "https://api.example.com")!,
+    store: snapshot,
+    transport: restartTransport,
+    clock: { 1_000_000 }
+  )
+  await restarted.flush()
+  #expect(restartTransport.requests.count == 1)
+  #expect(restartTransport.requests.first?.path == "/deliveries/d-crash/delivered")
+  #expect(snapshot.get(restarted.storageKey()) == "[]")
+}
+
 private final class MutableClock: @unchecked Sendable {
   var now: Int64
   init(_ now: Int64) { self.now = now }
