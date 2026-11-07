@@ -154,14 +154,14 @@ Requests notification permission. When granted, registers for remote notificatio
 #### `register()`
 
 ```swift
-func register() async throws
+func register(tokenWaitTimeout: TimeInterval = 10) async throws
 ```
 
-Fetches the current APNs token and creates or refreshes a Subscription (`mobileRegisterSubscription`). Sends a persisted Keychain credential when present so a repeat register keeps the same Subscription and Contact. Requires a prior `setAPNsDeviceToken` (or a token already available to the provider).
+Fetches the current APNs token and creates or refreshes a Subscription (`mobileRegisterSubscription`). Sends a persisted Keychain credential when present so a repeat register keeps the same Subscription and Contact. When no APNs token is stored yet, waits up to `tokenWaitTimeout` (default 10 s) for `setAPNsDeviceToken`. On timeout throws `tokenTimeout` and still registers automatically when the token later arrives.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| — | — | — |
+| `tokenWaitTimeout` | `TimeInterval` | How long to wait for the APNs token (default 10) |
 
 **Returns:** `Void`
 
@@ -569,11 +569,11 @@ Use these to build `UNNotificationContent` and action categories from `cr_*` pay
 | `categoryIdentifier(for:)` | `String` | Fixed `comraid.actions` (matches server APNs category) |
 | `registerCategories(from:)` | `Void` (async) | Merges categories into `UNUserNotificationCenter` |
 | `present(data:)` | `Void` (async throws) | Post a local tray item immediately |
-| `enrich(_:)` | `UNNotificationContent` (async) | Notification Service Extension: attach `cr_image_url`, register `comraid.actions` buttons |
+| `enrich(_:storageSuiteName:)` | `UNNotificationContent` (async) | Notification Service Extension: attach `cr_image_url`, register action buttons, send delivered ACK (pass App Group `storageSuiteName`) |
 
 #### Images and action buttons (Notification Service Extension)
 
-The server sets `mutable-content` when a push has an image or action buttons. iOS only shows the image (and, on a cold device, the buttons) when a Notification Service Extension adds them. Add an extension target that links `ComRaid`:
+The server sets `mutable-content` when a push has an image or action buttons. iOS only shows the image (and, on a cold device, the buttons) when a Notification Service Extension adds them. The same `enrich` path sends the delivered ACK. Share an App Group as `storageSuiteName` between the app and the extension so config and the ACK queue are readable. Add an extension target that links `ComRaid`:
 
 ```swift
 import ComRaid
@@ -584,12 +584,19 @@ final class NotificationService: UNNotificationServiceExtension {
     _ request: UNNotificationRequest,
     withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
   ) {
-    Task { contentHandler(await RemoteNotificationDisplay.enrich(request)) }
+    Task {
+      contentHandler(
+        await RemoteNotificationDisplay.enrich(
+          request,
+          storageSuiteName: "group.com.example.app.comraid"
+        )
+      )
+    }
   }
 }
 ```
 
-`ComRaid` is extension-safe: `requestPermission`, `requestAuthorization` and the bridge's `requestNotificationPermission` are unavailable in app extensions, and nothing else in the module needs `UIApplication`. Images are downloaded over http(s) with a 10 s timeout and a 5 MB cap (JPEG, PNG, GIF, HEIC); on failure the original content is shown. ObjC hosts can call `ComraidBridge.shared.enrichNotificationRequest(_:completion:)`.
+`ComRaid` is extension-safe: `requestPermission`, `requestAuthorization` and the bridge's `requestNotificationPermission` are unavailable in app extensions, and nothing else in the module needs `UIApplication`. Images are downloaded over http(s) with a 10 s timeout and a 5 MB cap (JPEG, PNG, GIF, HEIC); on failure the original content is shown. ObjC hosts can call `ComraidBridge.shared.enrichNotificationRequest(_:storageSuiteName:completion:)`.
 
 ### Models
 
@@ -614,6 +621,7 @@ Public `ComRaidError` cases:
 |------|------|
 | `notConfigured` | Called before `configure` |
 | `notReady` | Missing Subscription credential or Login required (e.g. `setAttributes`) |
+| `tokenTimeout` | APNs token did not arrive before `register` wait elapsed (RN reject code `tokenTimeout`) |
 | `invalidIdentifier` | Empty External user ID |
 | `invalidConfiguration(String)` | Blank App ID on `configure` |
 | `triggerMustBeInFuture` | Invalid schedule/timer duration or past trigger |
