@@ -1,10 +1,11 @@
+import CryptoKit
 import Foundation
 import UserNotifications
 
 /// Builds UNNotification content and categories from ComRaid push data keys.
 public enum RemoteNotificationDisplay {
-  /// APNs category id the server sets on action-bearing alerts (`comraid.actions`).
-  /// Must match server `IOSActionsCategory` so remote pushes show their buttons.
+  /// Prefix for ComRaid action categories. Server APNs still send this as `aps.category`;
+  /// the SDK registers and displays `comraid.actions.<stable hash>` per button set.
   public static let actionsCategoryIdentifier = "comraid.actions"
 
   static let imageTimeout: TimeInterval = 10
@@ -26,8 +27,9 @@ public enum RemoteNotificationDisplay {
     if let threadId = display.threadId {
       content.threadIdentifier = threadId
     }
-    if !PushPayload.actions(data).isEmpty {
-      content.categoryIdentifier = actionsCategoryIdentifier
+    let actions = PushPayload.actions(data)
+    if !actions.isEmpty {
+      content.categoryIdentifier = categoryIdentifier(for: actions)
     }
     return content
   }
@@ -44,18 +46,38 @@ public enum RemoteNotificationDisplay {
   /**
    Notification Service Extension helper for `didReceive(_:withContentHandler:)`.
    The server sets `mutable-content` when a push has an image or action buttons; this
-   attaches `cr_image_url` and registers the `comraid.actions` buttons before the OS draws it.
-   Returns the original content unchanged when there is nothing to add or a download fails.
+   registers per-button-set categories and attaches `cr_image_url` before the OS draws it.
+   Returns the original content unchanged when there is nothing to add.
    */
   public static func enrich(_ request: UNNotificationRequest) async -> UNNotificationContent {
     let data = PushPayload.fromUserInfo(request.content.userInfo)
     await registerCategories(from: data)
-    guard let imageUrl = PushPayload.display(data).imageUrl,
-          let attachment = await imageAttachment(from: imageUrl),
+    let attachment: UNNotificationAttachment?
+    if let imageUrl = PushPayload.display(data).imageUrl {
+      attachment = await imageAttachment(from: imageUrl)
+    } else {
+      attachment = nil
+    }
+    return applyingEnrichments(to: request, data: data, imageAttachment: attachment)
+  }
+
+  /// Applies hashed action category and optional image attachment for NSE / tests.
+  static func applyingEnrichments(
+    to request: UNNotificationRequest,
+    data: [String: String],
+    imageAttachment: UNNotificationAttachment? = nil
+  ) -> UNNotificationContent {
+    let actions = PushPayload.actions(data)
+    guard !actions.isEmpty || imageAttachment != nil,
           let content = request.content.mutableCopy() as? UNMutableNotificationContent else {
       return request.content
     }
-    content.attachments = [attachment]
+    if !actions.isEmpty {
+      content.categoryIdentifier = categoryIdentifier(for: actions)
+    }
+    if let imageAttachment {
+      content.attachments = [imageAttachment]
+    }
     return content
   }
 
@@ -111,7 +133,7 @@ public enum RemoteNotificationDisplay {
     }
     return [
       UNNotificationCategory(
-        identifier: actionsCategoryIdentifier,
+        identifier: categoryIdentifier(for: actions),
         actions: unActions,
         intentIdentifiers: [],
         options: []
@@ -119,28 +141,53 @@ public enum RemoteNotificationDisplay {
     ]
   }
 
-  /// Category id for action-bearing pushes. Matches the server APNs/FCM category.
+  /// Stable category id for a button set: `comraid.actions.<hash>`.
+  public static func categoryIdentifier(from data: [String: String]) -> String? {
+    let actions = PushPayload.actions(data)
+    guard !actions.isEmpty else { return nil }
+    return categoryIdentifier(for: actions)
+  }
+
+  /// Category id for action-bearing pushes. Prefer `categoryIdentifier(from:)`.
   /// - Parameter deliveryId: Unused; kept for source compatibility with earlier per-delivery ids.
-  @available(*, deprecated, message: "Use actionsCategoryIdentifier; deliveryId is ignored")
+  @available(*, deprecated, message: "Use categoryIdentifier(from:) derived from the button set")
   public static func categoryIdentifier(for deliveryId: String) -> String {
     _ = deliveryId
     return actionsCategoryIdentifier
   }
 
+  /// Stable `comraid.actions.<hash>` id for the given button set (order-sensitive).
+  static func categoryIdentifier(for actions: [PushAction]) -> String {
+    let canonical = actions.map { action in
+      [action.id, action.text, action.icon ?? ""].joined(separator: "\u{1f}")
+    }.joined(separator: "\u{1e}")
+    let digest = SHA256.hash(data: Data(canonical.utf8))
+    let hex = digest.prefix(8).map { String(format: "%02x", $0) }.joined()
+    return "\(actionsCategoryIdentifier).\(hex)"
+  }
+
+  /// Merge next ComRaid categories into existing ones; host categories with other ids are kept.
+  static func mergingCategories(
+    existing: [UNNotificationCategory],
+    with next: [UNNotificationCategory]
+  ) -> Set<UNNotificationCategory> {
+    var merged = Dictionary(uniqueKeysWithValues: existing.map { ($0.identifier, $0) })
+    for category in next {
+      merged[category.identifier] = category
+    }
+    return Set(merged.values)
+  }
+
   /// Register action categories with the system notification center.
-  /// Updates the shared `comraid.actions` category from the payload's buttons.
-  /// Background OS-drawn alerts only show buttons when this category was already
+  /// Merges hashed per-button-set categories into existing ones (host categories kept).
+  /// Background OS-drawn alerts only show buttons when the category was already
   /// registered (for example after a prior present/register, or via an NSE).
   public static func registerCategories(from data: [String: String]) async {
     let next = categories(from: data)
     guard !next.isEmpty else { return }
     let center = UNUserNotificationCenter.current()
     let existing = await center.notificationCategories()
-    var merged = Dictionary(uniqueKeysWithValues: existing.map { ($0.identifier, $0) })
-    for category in next {
-      merged[category.identifier] = category
-    }
-    center.setNotificationCategories(Set(merged.values))
+    center.setNotificationCategories(mergingCategories(existing: Array(existing), with: next))
   }
 
   /**
