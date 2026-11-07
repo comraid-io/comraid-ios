@@ -7,7 +7,8 @@ struct MobileApiClient: Sendable {
 
   func register(
     token: String,
-    properties: DeviceProperties?
+    properties: DeviceProperties?,
+    subscriptionCredential: String? = nil
   ) async throws -> (subscriptionId: String, credential: String?) {
     var payload: [String: Any] = [
       "platform": "ios",
@@ -15,6 +16,9 @@ struct MobileApiClient: Sendable {
       "provider": "apns",
       "apns_environment": apnsEnvironment.rawValue,
     ]
+    if let subscriptionCredential, !subscriptionCredential.isEmpty {
+      payload["subscription_credential"] = subscriptionCredential
+    }
     putDeviceFields(&payload, properties)
     let response = try await post(path: "/mobile/subscriptions", payload: payload)
     try requireSuccess(response, expected: [200, 201])
