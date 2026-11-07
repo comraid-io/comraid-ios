@@ -27,7 +27,7 @@ pod 'ComRaid'
 Configure early with a publishable App ID and APNs environment, then run the identity loop:
 
 ```swift
-await ComRaid.shared.configure(
+try await ComRaid.shared.configure(
   .init(
     appId: "cr_app_your_id",
     // apiBaseURL: URL(string: "http://localhost:8080")!, // optional; default https://api.comraid.io
@@ -66,10 +66,11 @@ Depth B: signature, purpose, parameters, and return type. Examples are clustered
 #### `configure(_:)`
 
 ```swift
-func configure(_ configuration: ComRaidConfiguration)
+func configure(_ configuration: ComRaidConfiguration) throws
 ```
 
 Persists App ID / API base / APNs environment, sets up Keychain Subscription storage (id, credential, External user ID), restores a logged-in External user ID when present, and starts ACK flush.
+Throws `ComRaidError.invalidConfiguration` when `appId` is blank (does not crash).
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -483,7 +484,7 @@ let all = try ComRaid.shared.timers()
 try ComRaid.shared.cancelTimer(id: "focus-1")
 ```
 
-`pauseTimer` / `resumeTimer` / `cancelTimer` / `timers` are local timer lifecycle APIs (iOS-only relative to other ComRaid mobile SDKs).
+`pauseTimer` / `resumeTimer` / `cancelTimer` / `timers` are Local notification timer lifecycle APIs (parity with Android and React Native).
 
 #### `startTimer(id:duration:notification:)`
 
@@ -614,6 +615,7 @@ Public `ComRaidError` cases:
 | `notConfigured` | Called before `configure` |
 | `notReady` | Missing Subscription credential or Login required (e.g. `setAttributes`) |
 | `invalidIdentifier` | Empty External user ID |
+| `invalidConfiguration(String)` | Blank App ID on `configure` |
 | `triggerMustBeInFuture` | Invalid schedule/timer duration or past trigger |
 | `timerNotFound` | Unknown timer id |
 | `timerNotPaused` | Pause/resume state mismatch |
@@ -622,9 +624,9 @@ Public `ComRaidError` cases:
 
 ## Objective-C bridge
 
-`ComRaidObjCBridge` (`@objc(ComraidBridge)`) exposes a **subset** of the Swift API for React Native / ObjC hosts: configure (including `displayForegroundNotifications`), APNs token, permission, register, login/logout, opt-in/out, capabilities, schedule/cancel/pendingSchedules, `startTimer`, `setDeviceProperties`, Attributes, ACK helpers, `getToken`, `getInitialNotification`, `presentNotification`, `enrichNotificationRequest` (Notification Service Extension), receive event emitter, and remote handle/presentation helpers.
+`ComRaidObjCBridge` (`@objc(ComraidBridge)`) exposes the mobile host surface for React Native / ObjC: configure (including `displayForegroundNotifications`), APNs token, `onPushTokenRefresh`, permission (default or explicit option strings), register, login/logout, opt-in/out, capabilities, schedule/cancel/pendingSchedules, `startTimer` / `pauseTimer` / `resumeTimer` / `cancelTimer` / `timers`, `setDeviceProperties`, Attributes, ACK helpers, `getToken`, `getInitialNotification`, `presentNotification`, `enrichNotificationRequest` (Notification Service Extension), receive event emitter, and remote handle/presentation helpers.
 
-It does **not** mirror full Swift parity (for example timer pause/resume/list, `onPushTokenRefresh`, or direct `RemoteNotificationDisplay` builders). Prefer the Swift `ComRaid` actor when possible.
+Direct `RemoteNotificationDisplay` builders stay Swift-only. Prefer the Swift `ComRaid` actor when possible.
 
 ## Not wrapped (HTTP-only)
 
@@ -632,6 +634,8 @@ It does **not** mirror full Swift parity (for example timer pause/resume/list, `
 
 ## Tests
 
+`Package.swift` is iOS-only (no macOS host target). Run tests on a simulator:
+
 ```bash
-swift test
+xcodebuild -scheme ComRaid -destination 'platform=iOS Simulator,name=iPhone 16' test
 ```

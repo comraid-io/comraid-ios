@@ -61,7 +61,7 @@ private struct OpenedAckHarness {
     let comraid = ComRaid()
     await comraid.resetForTests()
     let transport = RecordingTransport()
-    await comraid.configureForTests(
+    try await comraid.configureForTests(
       .init(appId: "cr_app_test", apnsEnvironment: .sandbox),
       transport: transport,
       tokenProvider: FakeTokenProvider(token: "token"),

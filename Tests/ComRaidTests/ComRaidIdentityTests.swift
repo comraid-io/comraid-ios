@@ -184,7 +184,7 @@ import Testing
     body: Data(#"{"contact_id":"c-1","external_user_id":"user_123","updated_attributes":["plan"]}"#.utf8)
   )
   let comraid = ComRaid()
-  await comraid.configureForTests(
+  try await comraid.configureForTests(
     .init(appId: "cr_app_test", apnsEnvironment: .sandbox),
     transport: transport,
     tokenProvider: FakeTokenProvider(token: "token"),
@@ -206,7 +206,7 @@ import Testing
   )
   let apns = StoredAPNsTokenProvider()
   let comraid = ComRaid()
-  await comraid.configureForTests(
+  try await comraid.configureForTests(
     .init(appId: "cr_app_test", apnsEnvironment: .sandbox),
     transport: transport,
     tokenProvider: apns,
@@ -263,7 +263,7 @@ private struct IdentityHarness {
     let transport = RecordingTransport()
     let store = InMemorySubscriptionStore()
     let tokens = FakeTokenProvider(token: token)
-    await comraid.configureForTests(
+    try await comraid.configureForTests(
       .init(appId: "cr_app_test", apnsEnvironment: .sandbox),
       transport: transport,
       tokenProvider: tokens,
