@@ -36,19 +36,28 @@ import Testing
   #expect(body["jwt"] as? String == "jwt-from-backend")
 }
 
-@Test func logoutPostsAndKeepsCredential() async throws {
-  let harness = try await IdentityHarness.make()
+@Test func logoutClearsIdentityAndRegistersFreshSubscription() async throws {
+  let harness = try await IdentityHarness.make(token: "apns-token-1")
   harness.store.save(subscriptionId: "sub-1", credential: "cred-1")
-  harness.transport.nextResponse = HttpResponse(
-    statusCode: 200,
-    body: Data(#"{"subscription_id":"sub-1","active":false,"verified":false}"#.utf8)
+  harness.store.setExternalUserId("user_123")
+  harness.transport.enqueue(
+    HttpResponse(statusCode: 200, body: Data(#"{"subscription_id":"sub-1","active":false,"verified":false}"#.utf8)),
+    HttpResponse(
+      statusCode: 201,
+      body: Data(#"{"subscription_id":"sub-new","subscription_credential":"cred-new","channel":"push","anonymous":true,"platform":"ios","provider":"apns"}"#.utf8)
+    )
   )
 
   try await harness.comraid.logout()
 
-  #expect(harness.transport.requests.first?.path == "/mobile/subscriptions/sub-1/logout")
-  #expect(harness.store.subscriptionId == "sub-1")
-  #expect(harness.store.credential == "cred-1")
+  #expect(harness.transport.requests.count == 2)
+  #expect(harness.transport.requests[0].path == "/mobile/subscriptions/sub-1/logout")
+  #expect(harness.transport.requests[1].path == "/mobile/subscriptions")
+  let registerBody = try JSONSerialization.jsonObject(with: #require(harness.transport.requests[1].body)) as! [String: Any]
+  #expect(registerBody["subscription_credential"] == nil)
+  #expect(harness.store.subscriptionId == "sub-new")
+  #expect(harness.store.credential == "cred-new")
+  #expect(harness.store.externalUserId == nil)
 }
 
 @Test func optOutPostsPushChannel() async throws {
@@ -79,21 +88,25 @@ import Testing
   #expect(harness.transport.requests.first?.path == "/mobile/subscriptions/sub-1/opt-in")
 }
 
-@Test func optOutAfterLogoutUsesStoredCredential() async throws {
-  let harness = try await IdentityHarness.make()
+@Test func optOutAfterLogoutUsesFreshSubscriptionCredential() async throws {
+  let harness = try await IdentityHarness.make(token: "apns-token-1")
   harness.store.save(subscriptionId: "sub-1", credential: "cred-1")
   harness.transport.enqueue(
     HttpResponse(statusCode: 200, body: Data(#"{"subscription_id":"sub-1","active":false,"verified":false}"#.utf8)),
-    HttpResponse(statusCode: 200, body: Data(#"{"subscription_id":"sub-1","contact_id":"c-1","channel":"push","opted_out":true}"#.utf8))
+    HttpResponse(
+      statusCode: 201,
+      body: Data(#"{"subscription_id":"sub-new","subscription_credential":"cred-new","channel":"push","anonymous":true,"platform":"ios","provider":"apns"}"#.utf8)
+    ),
+    HttpResponse(statusCode: 200, body: Data(#"{"subscription_id":"sub-new","contact_id":"c-anon","channel":"push","opted_out":true}"#.utf8))
   )
 
   try await harness.comraid.logout()
   try await harness.comraid.optOut()
 
-  #expect(harness.transport.requests.count == 2)
-  #expect(harness.transport.requests[1].path == "/mobile/subscriptions/sub-1/opt-out")
-  let body = try JSONSerialization.jsonObject(with: #require(harness.transport.requests[1].body)) as! [String: Any]
-  #expect(body["subscription_credential"] as? String == "cred-1")
+  #expect(harness.transport.requests.count == 3)
+  #expect(harness.transport.requests[2].path == "/mobile/subscriptions/sub-new/opt-out")
+  let body = try JSONSerialization.jsonObject(with: #require(harness.transport.requests[2].body)) as! [String: Any]
+  #expect(body["subscription_credential"] as? String == "cred-new")
 }
 
 @Test func loginBeforeConfigureThrowsNotConfigured() async throws {
@@ -126,8 +139,88 @@ import Testing
   #expect(body["token"] as? String == "apns-token-1")
   #expect(body["provider"] as? String == "apns")
   #expect(body["apns_environment"] as? String == "sandbox")
+  #expect(body["subscription_credential"] == nil)
   #expect(harness.store.subscriptionId == "sub-new")
   #expect(harness.store.credential == "cred-new")
+}
+
+@Test func registerSendsStoredCredentialOnRepeat() async throws {
+  let harness = try await IdentityHarness.make(token: "apns-token-1")
+  harness.store.save(subscriptionId: "sub-1", credential: "cred-1")
+  harness.transport.nextResponse = HttpResponse(
+    statusCode: 200,
+    body: Data(#"{"subscription_id":"sub-1","channel":"push","anonymous":true,"platform":"ios","provider":"apns"}"#.utf8)
+  )
+
+  try await harness.comraid.register()
+
+  let body = try JSONSerialization.jsonObject(with: #require(harness.transport.requests.first?.body)) as! [String: Any]
+  #expect(body["subscription_credential"] as? String == "cred-1")
+  #expect(body["token"] as? String == "apns-token-1")
+  #expect(harness.store.subscriptionId == "sub-1")
+  #expect(harness.store.credential == "cred-1")
+}
+
+@Test func loginPersistsExternalUserId() async throws {
+  let harness = try await IdentityHarness.make()
+  harness.store.save(subscriptionId: "sub-1", credential: "cred-1")
+  harness.transport.nextResponse = HttpResponse(
+    statusCode: 200,
+    body: Data(#"{"subscription_id":"sub-1","contact_id":"c-1","external_user_id":"user_123","anonymous":false,"verified":false}"#.utf8)
+  )
+
+  try await harness.comraid.login(externalUserId: "user_123")
+
+  #expect(harness.store.externalUserId == "user_123")
+}
+
+@Test func setAttributesWorksAfterReconfigureWithPersistedIdentity() async throws {
+  let store = InMemorySubscriptionStore()
+  store.save(subscriptionId: "sub-1", credential: "cred-1")
+  store.setExternalUserId("user_123")
+  let transport = RecordingTransport()
+  transport.nextResponse = HttpResponse(
+    statusCode: 200,
+    body: Data(#"{"contact_id":"c-1","external_user_id":"user_123","updated_attributes":["plan"]}"#.utf8)
+  )
+  let comraid = ComRaid()
+  try await comraid.configureForTests(
+    .init(appId: "cr_app_test", apnsEnvironment: .sandbox),
+    transport: transport,
+    tokenProvider: FakeTokenProvider(token: "token"),
+    subscriptionStore: store
+  )
+
+  try await comraid.setAttributes(["plan": "premium"])
+
+  #expect(transport.requests.first?.path == "/mobile/subscriptions/sub-1/attributes")
+}
+
+@Test func setAPNsDeviceTokenWithExistingSubscriptionCallsReplaceToken() async throws {
+  let store = InMemorySubscriptionStore()
+  store.save(subscriptionId: "sub-1", credential: "cred-1")
+  let transport = RecordingTransport()
+  transport.nextResponse = HttpResponse(
+    statusCode: 200,
+    body: Data(#"{"subscription_id":"sub-1","anonymous":true,"platform":"ios","provider":"apns","verified":false,"token_version":2}"#.utf8)
+  )
+  let apns = StoredAPNsTokenProvider()
+  let comraid = ComRaid()
+  try await comraid.configureForTests(
+    .init(appId: "cr_app_test", apnsEnvironment: .sandbox),
+    transport: transport,
+    tokenProvider: apns,
+    subscriptionStore: store
+  )
+
+  let tokenBytes = Data([0x01, 0x02, 0xAB, 0xCD])
+  await comraid.setAPNsDeviceToken(tokenBytes)
+
+  let request = try #require(transport.requests.first)
+  #expect(request.path == "/mobile/subscriptions/sub-1/token")
+  let body = try JSONSerialization.jsonObject(with: #require(request.body)) as! [String: Any]
+  #expect(body["subscription_credential"] as? String == "cred-1")
+  #expect(body["token"] as? String == "0102abcd")
 }
 
 @Test func tokenRefreshWithCredentialCallsReplaceToken() async throws {
@@ -170,7 +263,7 @@ private struct IdentityHarness {
     let transport = RecordingTransport()
     let store = InMemorySubscriptionStore()
     let tokens = FakeTokenProvider(token: token)
-    await comraid.configureForTests(
+    try await comraid.configureForTests(
       .init(appId: "cr_app_test", apnsEnvironment: .sandbox),
       transport: transport,
       tokenProvider: tokens,

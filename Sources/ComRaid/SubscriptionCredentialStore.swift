@@ -4,16 +4,19 @@ import Security
 protocol SubscriptionCredentialStore: Sendable {
   var subscriptionId: String? { get }
   var credential: String? { get }
+  var externalUserId: String? { get }
   func save(subscriptionId: String, credential: String?)
+  func setExternalUserId(_ externalUserId: String?)
   func clear()
 }
 
-/// Persists Subscription id + credential in the Keychain.
+/// Persists Subscription id, credential, and External user ID in the Keychain.
 final class KeychainSubscriptionStore: SubscriptionCredentialStore, @unchecked Sendable {
   private let lock = NSLock()
   private let service: String
   private let idAccount = "subscription_id"
   private let credentialAccount = "subscription_credential"
+  private let externalUserIdAccount = "external_user_id"
 
   init(suiteName: String?) {
     service = suiteName.map { "com.comraid.subscription.\($0)" } ?? "com.comraid.subscription"
@@ -27,6 +30,10 @@ final class KeychainSubscriptionStore: SubscriptionCredentialStore, @unchecked S
     lock.withLock { read(service: service, account: credentialAccount) }
   }
 
+  var externalUserId: String? {
+    lock.withLock { read(service: service, account: externalUserIdAccount) }
+  }
+
   func save(subscriptionId: String, credential: String?) {
     lock.withLock {
       write(service: service, account: idAccount, value: subscriptionId)
@@ -36,10 +43,21 @@ final class KeychainSubscriptionStore: SubscriptionCredentialStore, @unchecked S
     }
   }
 
+  func setExternalUserId(_ externalUserId: String?) {
+    lock.withLock {
+      if let externalUserId {
+        write(service: service, account: externalUserIdAccount, value: externalUserId)
+      } else {
+        delete(service: service, account: externalUserIdAccount)
+      }
+    }
+  }
+
   func clear() {
     lock.withLock {
       delete(service: service, account: idAccount)
       delete(service: service, account: credentialAccount)
+      delete(service: service, account: externalUserIdAccount)
     }
   }
 

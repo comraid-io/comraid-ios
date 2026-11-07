@@ -19,6 +19,14 @@ public actor ComRaid {
   /// Nil until first use so unit tests that only exercise the identity HTTP seam
   /// never touch `UNUserNotificationCenter.current()` (crashes under SwiftPM's helper).
   private var injectedNotificationCenter: UNUserNotificationCenter?
+  /// Injectable Local notification arm/cancel (defaults to `UNUserNotificationCenter`).
+  private var localNotificationScheduler: (any LocalNotificationScheduling)?
+  /// Injectable clock for schedule / timer remaining calculations (tests).
+  private var clock: @Sendable () -> Date = { Date() }
+  /// Flushes queued ACKs on app foreground (NSE / background helpers flush separately).
+  private var foregroundFlushObserver: NSObjectProtocol?
+  /// Set when `register` times out waiting for APNs; cleared on success or late auto-register.
+  private var pendingRegisterAfterToken = false
 
   public init(notificationCenter: UNUserNotificationCenter? = nil) {
     self.injectedNotificationCenter = notificationCenter
@@ -31,8 +39,18 @@ public actor ComRaid {
     return center
   }
 
-  public func configure(_ configuration: ComRaidConfiguration) {
-    precondition(!configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "appId is required (cr_app_…)")
+  private func requireLocalNotificationScheduler() -> any LocalNotificationScheduling {
+    if let localNotificationScheduler { return localNotificationScheduler }
+    let scheduler = SystemLocalNotificationScheduler(center: notificationCenter, clock: clock)
+    localNotificationScheduler = scheduler
+    return scheduler
+  }
+
+  public func configure(_ configuration: ComRaidConfiguration) throws {
+    let trimmedAppId = configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedAppId.isEmpty else {
+      throw ComRaidError.invalidConfiguration("appId is required (cr_app_…)")
+    }
     self.configuration = configuration
     store = ComRaidStore(suiteName: configuration.storageSuiteName)
     let credentials = KeychainSubscriptionStore(suiteName: configuration.storageSuiteName)
@@ -42,7 +60,7 @@ public actor ComRaid {
     tokenProvider = apns
     let transport = URLSessionHttpTransport(apiBaseURL: configuration.apiBaseURL)
     api = MobileApiClient(
-      appId: configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines),
+      appId: trimmedAppId,
       apnsEnvironment: configuration.apnsEnvironment,
       transport: transport
     )
@@ -53,27 +71,35 @@ public actor ComRaid {
     )
     ackQueue = queue
     deviceProperties = nil
-    externalUserId = nil
+    externalUserId = credentials.externalUserId
+    pendingRegisterAfterToken = false
     SdkConfigStore(suiteName: configuration.storageSuiteName).save(configuration)
+    installForegroundFlushObserver()
     Task { await queue.flush() }
   }
 
-  /// Test seam: injectable HTTP transport, token provider, subscription store, and ACK store.
+  /// Test seam: injectable HTTP transport, token provider, subscription store, ACK store,
+  /// Local notification scheduler, and clock.
   func configureForTests(
     _ configuration: ComRaidConfiguration,
     transport: any HttpTransport,
     tokenProvider: any TokenProvider,
     subscriptionStore: any SubscriptionCredentialStore,
-    ackQueueStore: (any AckQueueStore)? = nil
-  ) {
-    precondition(!configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "appId is required (cr_app_…)")
+    ackQueueStore: (any AckQueueStore)? = nil,
+    localNotificationScheduler: (any LocalNotificationScheduling)? = nil,
+    clock: (@Sendable () -> Date)? = nil
+  ) throws {
+    let trimmedAppId = configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedAppId.isEmpty else {
+      throw ComRaidError.invalidConfiguration("appId is required (cr_app_…)")
+    }
     self.configuration = configuration
     store = ComRaidStore(suiteName: configuration.storageSuiteName)
     self.subscriptionStore = subscriptionStore
     self.tokenProvider = tokenProvider
-    apnsTokenProvider = nil
+    apnsTokenProvider = tokenProvider as? StoredAPNsTokenProvider
     api = MobileApiClient(
-      appId: configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines),
+      appId: trimmedAppId,
       apnsEnvironment: configuration.apnsEnvironment,
       transport: transport
     )
@@ -82,11 +108,15 @@ public actor ComRaid {
       store: ackQueueStore ?? InMemoryAckQueueStoreForTests(),
       transport: transport
     )
+    self.localNotificationScheduler = localNotificationScheduler
+    if let clock { self.clock = clock }
     deviceProperties = nil
-    externalUserId = nil
+    externalUserId = subscriptionStore.externalUserId
+    pendingRegisterAfterToken = false
   }
 
   func resetForTests() {
+    removeForegroundFlushObserver()
     configuration = nil
     store = nil
     api = nil
@@ -94,16 +124,57 @@ public actor ComRaid {
     tokenProvider = nil
     apnsTokenProvider = nil
     ackQueue = nil
+    localNotificationScheduler = nil
+    clock = { Date() }
     deviceProperties = nil
     externalUserId = nil
+    pendingRegisterAfterToken = false
     RemoteReceiveHub.shared.resetForTests()
   }
 
+  /// App foreground entry: drain any ACKs queued while offline / in background.
+  /// Notification Service Extension uses `BackgroundAckHelpers` (no BGTask).
+  func handleAppWillEnterForeground() async {
+    await ackQueue?.flush()
+  }
+
+  private func installForegroundFlushObserver() {
+    #if canImport(UIKit)
+    removeForegroundFlushObserver()
+    foregroundFlushObserver = NotificationCenter.default.addObserver(
+      forName: UIApplication.willEnterForegroundNotification,
+      object: nil,
+      queue: .main
+    ) { _ in
+      Task { await ComRaid.shared.handleAppWillEnterForeground() }
+    }
+    #endif
+  }
+
+  private func removeForegroundFlushObserver() {
+    if let foregroundFlushObserver {
+      NotificationCenter.default.removeObserver(foregroundFlushObserver)
+      self.foregroundFlushObserver = nil
+    }
+  }
+
   /// Forward the APNs device token from `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`.
+  /// When a Subscription credential already exists, calls `/token` automatically.
+  /// When a prior `register` timed out waiting for this token, registers automatically.
   public func setAPNsDeviceToken(_ tokenData: Data) async {
     await apnsTokenProvider?.setDeviceToken(tokenData)
     if let hex = try? await apnsTokenProvider?.currentToken() {
       RemoteReceiveHub.shared.notifyTokenRefresh(hex)
+    }
+    if pendingRegisterAfterToken {
+      pendingRegisterAfterToken = false
+      try? await register(tokenWaitTimeout: 0)
+      return
+    }
+    if let store = subscriptionStore,
+       let subscriptionId = store.subscriptionId, !subscriptionId.isEmpty,
+       let credential = store.credential, !credential.isEmpty {
+      try? await onPushTokenRefresh()
     }
   }
 
@@ -230,12 +301,29 @@ public actor ComRaid {
   }
 
   /// Fetches the APNs token via TokenProvider and registers a Subscription.
-  public func register() async throws {
+  /// When no APNs token is stored yet, waits up to `tokenWaitTimeout` (default 10 s).
+  /// On timeout throws `tokenTimeout` and registers automatically when the token later arrives.
+  public func register(tokenWaitTimeout: TimeInterval = 10) async throws {
     let api = try requireAPI()
     let tokens = try requireTokenProvider()
     let store = try requireSubscriptionStore()
-    let token = try await tokens.currentToken()
-    let result = try await api.register(token: token, properties: deviceProperties)
+    let token: String
+    if let apns = apnsTokenProvider {
+      do {
+        token = try await apns.waitForToken(timeout: tokenWaitTimeout)
+      } catch ComRaidError.tokenTimeout {
+        pendingRegisterAfterToken = true
+        throw ComRaidError.tokenTimeout
+      }
+    } else {
+      token = try await tokens.currentToken()
+    }
+    pendingRegisterAfterToken = false
+    let result = try await api.register(
+      token: token,
+      properties: deviceProperties,
+      subscriptionCredential: store.credential
+    )
     store.save(subscriptionId: result.subscriptionId, credential: result.credential)
   }
 
@@ -253,13 +341,18 @@ public actor ComRaid {
         properties: deviceProperties
       )
     } else {
-      let result = try await api.register(token: token, properties: deviceProperties)
+      let result = try await api.register(
+        token: token,
+        properties: deviceProperties,
+        subscriptionCredential: nil
+      )
       store.save(subscriptionId: result.subscriptionId, credential: result.credential)
     }
   }
 
   public func login(externalUserId: String, jwt: String? = nil) async throws {
     let api = try requireAPI()
+    let store = try requireSubscriptionStore()
     let (subscriptionId, credential) = try requireSubscription()
     let trimmed = externalUserId.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { throw ComRaidError.invalidIdentifier }
@@ -269,14 +362,18 @@ public actor ComRaid {
       externalUserId: trimmed,
       jwt: jwt
     )
+    store.setExternalUserId(trimmed)
     self.externalUserId = trimmed
   }
 
   public func logout() async throws {
     let api = try requireAPI()
+    let store = try requireSubscriptionStore()
     let (subscriptionId, credential) = try requireSubscription()
     try await api.logout(subscriptionId: subscriptionId, credential: credential)
+    store.clear()
     externalUserId = nil
+    try await register()
   }
 
   /// Persist Subscription device Properties for the next register / token refresh.
@@ -288,6 +385,7 @@ public actor ComRaid {
   /**
    Upsert Contact Attributes for the logged-in Contact
    (`PUT /mobile/subscriptions/{id}/attributes`).
+   Pass `NSNull()` for a key to remove that Attribute.
    */
   public func setAttributes(_ attributes: sending [String: Any]) async throws {
     let api = try requireAPI()
@@ -370,7 +468,10 @@ public actor ComRaid {
       _ = await ackQueue.enqueueFromPayload(kind: .delivered, data: data)
       await ackQueue.flush()
     } else {
-      await BackgroundAckHelpers.handleReceived(data: data)
+      await BackgroundAckHelpers.handleReceived(
+        data: data,
+        storageSuiteName: configuration?.storageSuiteName
+      )
     }
     // Delivered ≠ opened: never auto-ACK opened on receive (ADR 0006).
     RemoteReceiveHub.shared.notifyMessageReceived(
@@ -419,7 +520,11 @@ public actor ComRaid {
       _ = await ackQueue.enqueueFromPayload(kind: .opened, data: data, actionId: resolvedAction)
       await ackQueue.flush()
     } else {
-      await BackgroundAckHelpers.handleOpened(data: data, actionId: resolvedAction)
+      await BackgroundAckHelpers.handleOpened(
+        data: data,
+        actionId: resolvedAction,
+        storageSuiteName: configuration?.storageSuiteName
+      )
     }
     RemoteReceiveHub.shared.notifyNotificationOpened(
       RemoteMessageMapper.toEvent(data, actionId: resolvedAction)
@@ -454,8 +559,9 @@ public actor ComRaid {
 
   public func schedule(_ request: ComRaidScheduleRequest) async throws {
     let currentStore = try configuredStore()
+    let scheduler = requireLocalNotificationScheduler()
     try validate(request)
-    try await addSystemRequest(request)
+    try await scheduler.schedule(request)
 
     var state = currentStore.read()
     state.schedules.removeAll { $0.notification.id == request.notification.id }
@@ -463,18 +569,19 @@ public actor ComRaid {
     do {
       try currentStore.write(state)
     } catch {
-      notificationCenter.removePendingNotificationRequests(withIdentifiers: [request.notification.id])
+      scheduler.cancel(id: request.notification.id)
       throw ComRaidError.persistenceFailed
     }
   }
 
   public func pendingSchedules() throws -> [ComRaidScheduleRequest] {
-    try configuredStore().read().schedules.filter { $0.triggerDate > Date() }.sorted { $0.triggerDate < $1.triggerDate }
+    let now = clock()
+    return try configuredStore().read().schedules.filter { $0.triggerDate > now }.sorted { $0.triggerDate < $1.triggerDate }
   }
 
   public func cancel(id: String) throws {
     let currentStore = try configuredStore()
-    notificationCenter.removePendingNotificationRequests(withIdentifiers: [id])
+    requireLocalNotificationScheduler().cancel(id: id)
     var state = currentStore.read()
     state.schedules.removeAll { $0.notification.id == id }
     if let index = state.timers.firstIndex(where: { $0.id == id }) {
@@ -491,7 +598,7 @@ public actor ComRaid {
     notification: ComRaidNotification
   ) async throws -> ComRaidTimer {
     guard duration.isFinite, duration > 0 else { throw ComRaidError.triggerMustBeInFuture }
-    let targetDate = Date().addingTimeInterval(duration)
+    let targetDate = clock().addingTimeInterval(duration)
     var adjustedNotification = notification
     adjustedNotification.id = id
     try await schedule(.init(notification: adjustedNotification, triggerDate: targetDate))
@@ -514,12 +621,12 @@ public actor ComRaid {
     guard let index = state.timers.firstIndex(where: { $0.id == id }) else { throw ComRaidError.timerNotFound }
     var timer = state.timers[index]
     guard timer.state == .running, let targetDate = timer.targetDate else { throw ComRaidError.timerNotPaused }
-    timer.remainingDuration = max(0, targetDate.timeIntervalSinceNow)
+    timer.remainingDuration = max(0, targetDate.timeIntervalSince(clock()))
     timer.targetDate = nil
     timer.state = .paused
     state.timers[index] = timer
     state.schedules.removeAll { $0.notification.id == id }
-    notificationCenter.removePendingNotificationRequests(withIdentifiers: [id])
+    requireLocalNotificationScheduler().cancel(id: id)
     try currentStore.write(state)
     return timer
   }
@@ -530,7 +637,7 @@ public actor ComRaid {
     let state = currentStore.read()
     guard var timer = state.timers.first(where: { $0.id == id }) else { throw ComRaidError.timerNotFound }
     guard timer.state == .paused else { throw ComRaidError.timerNotPaused }
-    let targetDate = Date().addingTimeInterval(max(timer.remainingDuration, 0.1))
+    let targetDate = clock().addingTimeInterval(max(timer.remainingDuration, 0.1))
     timer.state = .running
     timer.targetDate = targetDate
     try await schedule(.init(notification: timer.notification, triggerDate: targetDate))
@@ -540,7 +647,7 @@ public actor ComRaid {
 
   public func cancelTimer(id: String) throws {
     let currentStore = try configuredStore()
-    notificationCenter.removePendingNotificationRequests(withIdentifiers: [id])
+    requireLocalNotificationScheduler().cancel(id: id)
     var state = currentStore.read()
     state.schedules.removeAll { $0.notification.id == id }
     if let index = state.timers.firstIndex(where: { $0.id == id }) {
@@ -552,25 +659,6 @@ public actor ComRaid {
 
   public func timers() throws -> [ComRaidTimer] {
     try configuredStore().read().timers
-  }
-
-  private func addSystemRequest(_ request: ComRaidScheduleRequest) async throws {
-    let content = UNMutableNotificationContent()
-    content.title = request.notification.title
-    content.body = request.notification.body
-    if let subtitle = request.notification.subtitle { content.subtitle = subtitle }
-    if let category = request.notification.categoryIdentifier { content.categoryIdentifier = category }
-    content.userInfo = request.notification.userInfo
-    if request.notification.sound == "default" {
-      content.sound = .default
-    } else if let sound = request.notification.sound {
-      content.sound = UNNotificationSound(named: UNNotificationSoundName(sound))
-    }
-    let interval = max(request.triggerDate.timeIntervalSinceNow, 0.1)
-    let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
-    try await notificationCenter.add(
-      UNNotificationRequest(identifier: request.notification.id, content: content, trigger: trigger)
-    )
   }
 
   private func updateTimer(_ timer: ComRaidTimer) throws {
@@ -585,7 +673,9 @@ public actor ComRaid {
     guard !request.notification.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
       throw ComRaidError.invalidIdentifier
     }
-    guard request.triggerDate.timeIntervalSince1970.isFinite, request.triggerDate.timeIntervalSinceNow > 0 else { throw ComRaidError.triggerMustBeInFuture }
+    guard request.triggerDate.timeIntervalSince1970.isFinite, request.triggerDate > clock() else {
+      throw ComRaidError.triggerMustBeInFuture
+    }
   }
 
   private func configuredStore() throws -> ComRaidStore {
