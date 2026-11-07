@@ -55,7 +55,7 @@ public actor ComRaid {
     )
     ackQueue = queue
     deviceProperties = nil
-    externalUserId = nil
+    externalUserId = credentials.externalUserId
     SdkConfigStore(suiteName: configuration.storageSuiteName).save(configuration)
     installForegroundFlushObserver()
     Task { await queue.flush() }
@@ -74,7 +74,7 @@ public actor ComRaid {
     store = ComRaidStore(suiteName: configuration.storageSuiteName)
     self.subscriptionStore = subscriptionStore
     self.tokenProvider = tokenProvider
-    apnsTokenProvider = nil
+    apnsTokenProvider = tokenProvider as? StoredAPNsTokenProvider
     api = MobileApiClient(
       appId: configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines),
       apnsEnvironment: configuration.apnsEnvironment,
@@ -86,7 +86,7 @@ public actor ComRaid {
       transport: transport
     )
     deviceProperties = nil
-    externalUserId = nil
+    externalUserId = subscriptionStore.externalUserId
   }
 
   func resetForTests() {
@@ -130,10 +130,16 @@ public actor ComRaid {
   }
 
   /// Forward the APNs device token from `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`.
+  /// When a Subscription credential already exists, calls `/token` automatically.
   public func setAPNsDeviceToken(_ tokenData: Data) async {
     await apnsTokenProvider?.setDeviceToken(tokenData)
     if let hex = try? await apnsTokenProvider?.currentToken() {
       RemoteReceiveHub.shared.notifyTokenRefresh(hex)
+    }
+    if let store = subscriptionStore,
+       let subscriptionId = store.subscriptionId, !subscriptionId.isEmpty,
+       let credential = store.credential, !credential.isEmpty {
+      try? await onPushTokenRefresh()
     }
   }
 
@@ -265,7 +271,11 @@ public actor ComRaid {
     let tokens = try requireTokenProvider()
     let store = try requireSubscriptionStore()
     let token = try await tokens.currentToken()
-    let result = try await api.register(token: token, properties: deviceProperties)
+    let result = try await api.register(
+      token: token,
+      properties: deviceProperties,
+      subscriptionCredential: store.credential
+    )
     store.save(subscriptionId: result.subscriptionId, credential: result.credential)
   }
 
@@ -283,13 +293,18 @@ public actor ComRaid {
         properties: deviceProperties
       )
     } else {
-      let result = try await api.register(token: token, properties: deviceProperties)
+      let result = try await api.register(
+        token: token,
+        properties: deviceProperties,
+        subscriptionCredential: nil
+      )
       store.save(subscriptionId: result.subscriptionId, credential: result.credential)
     }
   }
 
   public func login(externalUserId: String, jwt: String? = nil) async throws {
     let api = try requireAPI()
+    let store = try requireSubscriptionStore()
     let (subscriptionId, credential) = try requireSubscription()
     let trimmed = externalUserId.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { throw ComRaidError.invalidIdentifier }
@@ -299,14 +314,18 @@ public actor ComRaid {
       externalUserId: trimmed,
       jwt: jwt
     )
+    store.setExternalUserId(trimmed)
     self.externalUserId = trimmed
   }
 
   public func logout() async throws {
     let api = try requireAPI()
+    let store = try requireSubscriptionStore()
     let (subscriptionId, credential) = try requireSubscription()
     try await api.logout(subscriptionId: subscriptionId, credential: credential)
+    store.clear()
     externalUserId = nil
+    try await register()
   }
 
   /// Persist Subscription device Properties for the next register / token refresh.
@@ -318,6 +337,7 @@ public actor ComRaid {
   /**
    Upsert Contact Attributes for the logged-in Contact
    (`PUT /mobile/subscriptions/{id}/attributes`).
+   Pass `NSNull()` for a key to remove that Attribute.
    */
   public func setAttributes(_ attributes: sending [String: Any]) async throws {
     let api = try requireAPI()
