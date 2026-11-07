@@ -256,7 +256,7 @@ Upserts Contact Attributes for the logged-in Contact (`PUT /mobile/subscriptions
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `attributes` | `[String: Any]` | Attribute map (empty map is a successful empty update) |
+| `attributes` | `[String: Any]` | Attribute map (empty map is a successful empty update). Pass `NSNull()` for a key to remove that Attribute. |
 
 **Returns:** `Void`
 

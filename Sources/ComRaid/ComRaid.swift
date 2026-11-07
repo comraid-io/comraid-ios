@@ -288,6 +288,7 @@ public actor ComRaid {
   /**
    Upsert Contact Attributes for the logged-in Contact
    (`PUT /mobile/subscriptions/{id}/attributes`).
+   Pass `NSNull()` for a key to remove that Attribute.
    */
   public func setAttributes(_ attributes: sending [String: Any]) async throws {
     let api = try requireAPI()
