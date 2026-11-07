@@ -19,6 +19,8 @@ public actor ComRaid {
   /// Nil until first use so unit tests that only exercise the identity HTTP seam
   /// never touch `UNUserNotificationCenter.current()` (crashes under SwiftPM's helper).
   private var injectedNotificationCenter: UNUserNotificationCenter?
+  /// Flushes queued ACKs on app foreground (NSE / background helpers flush separately).
+  private var foregroundFlushObserver: NSObjectProtocol?
 
   public init(notificationCenter: UNUserNotificationCenter? = nil) {
     self.injectedNotificationCenter = notificationCenter
@@ -55,6 +57,7 @@ public actor ComRaid {
     deviceProperties = nil
     externalUserId = nil
     SdkConfigStore(suiteName: configuration.storageSuiteName).save(configuration)
+    installForegroundFlushObserver()
     Task { await queue.flush() }
   }
 
@@ -87,6 +90,7 @@ public actor ComRaid {
   }
 
   func resetForTests() {
+    removeForegroundFlushObserver()
     configuration = nil
     store = nil
     api = nil
@@ -97,6 +101,32 @@ public actor ComRaid {
     deviceProperties = nil
     externalUserId = nil
     RemoteReceiveHub.shared.resetForTests()
+  }
+
+  /// App foreground entry: drain any ACKs queued while offline / in background.
+  /// Notification Service Extension uses `BackgroundAckHelpers` (no BGTask).
+  func handleAppWillEnterForeground() async {
+    await ackQueue?.flush()
+  }
+
+  private func installForegroundFlushObserver() {
+    #if canImport(UIKit)
+    removeForegroundFlushObserver()
+    foregroundFlushObserver = NotificationCenter.default.addObserver(
+      forName: UIApplication.willEnterForegroundNotification,
+      object: nil,
+      queue: .main
+    ) { _ in
+      Task { await ComRaid.shared.handleAppWillEnterForeground() }
+    }
+    #endif
+  }
+
+  private func removeForegroundFlushObserver() {
+    if let foregroundFlushObserver {
+      NotificationCenter.default.removeObserver(foregroundFlushObserver)
+      self.foregroundFlushObserver = nil
+    }
   }
 
   /// Forward the APNs device token from `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`.
