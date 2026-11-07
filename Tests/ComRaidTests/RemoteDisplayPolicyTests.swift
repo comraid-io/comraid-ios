@@ -71,5 +71,11 @@ import UserNotifications
   #expect(content.subtitle == "Now")
   #expect(content.userInfo["cr_delivery_id"] as? String == "d1")
   #expect(content.userInfo["path"] as? String == "/rematch")
-  #expect(content.categoryIdentifier == "comraid.actions")
+  #expect(content.categoryIdentifier.hasPrefix("comraid.actions."))
+  #expect(
+    content.categoryIdentifier
+      == RemoteNotificationDisplay.categories(from: [
+        "cr_actions": #"[{"id":"accept","text":"Accept"}]"#,
+      ])[0].identifier
+  )
 }
