@@ -189,24 +189,43 @@ extension ComRaidError {
 }
 
 /**
- Subscription (device) Properties sent on register / token refresh
- (`app_version` + `device` object per mobile OpenAPI).
+ Subscription / Contact Properties sent on register, token refresh, and session.
+ The SDK fills these automatically; `setDeviceProperties` overrides individual
+ fields (non-nil wins) for the next outbound call.
  */
 public struct DeviceProperties: Sendable, Equatable {
   public var appVersion: String?
+  public var sdkVersion: String?
   public var model: String?
+  public var os: String?
   public var osVersion: String?
+  public var locale: String?
+  public var timezone: String?
+  public var language: String?
+  public var country: String?
   public var extras: [String: String]
 
   public init(
     appVersion: String? = nil,
+    sdkVersion: String? = nil,
     model: String? = nil,
+    os: String? = nil,
     osVersion: String? = nil,
+    locale: String? = nil,
+    timezone: String? = nil,
+    language: String? = nil,
+    country: String? = nil,
     extras: [String: String] = [:]
   ) {
     self.appVersion = appVersion
+    self.sdkVersion = sdkVersion
     self.model = model
+    self.os = os
     self.osVersion = osVersion
+    self.locale = locale
+    self.timezone = timezone
+    self.language = language
+    self.country = country
     self.extras = extras
   }
 }

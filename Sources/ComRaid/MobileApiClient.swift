@@ -98,13 +98,43 @@ struct MobileApiClient: Sendable {
     try requireSuccess(response, expected: [200])
   }
 
+  func session(
+    subscriptionId: String,
+    credential: String,
+    properties: DeviceProperties?
+  ) async throws {
+    var payload: [String: Any] = ["subscription_credential": credential]
+    putDeviceFields(&payload, properties)
+    let response = try await post(path: "/mobile/subscriptions/\(subscriptionId)/session", payload: payload)
+    try requireSuccess(response, expected: [200])
+  }
+
   private func putDeviceFields(_ payload: inout [String: Any], _ properties: DeviceProperties?) {
     guard let properties else { return }
     if let appVersion = properties.appVersion?.trimmingCharacters(in: .whitespacesAndNewlines),
        !appVersion.isEmpty {
       payload["app_version"] = appVersion
     }
+    if let sdkVersion = properties.sdkVersion?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !sdkVersion.isEmpty {
+      payload["sdk_version"] = sdkVersion
+    }
+    if let locale = properties.locale?.trimmingCharacters(in: .whitespacesAndNewlines), !locale.isEmpty {
+      payload["locale"] = locale
+    }
+    if let timezone = properties.timezone?.trimmingCharacters(in: .whitespacesAndNewlines), !timezone.isEmpty {
+      payload["timezone"] = timezone
+    }
+    if let language = properties.language?.trimmingCharacters(in: .whitespacesAndNewlines), !language.isEmpty {
+      payload["language"] = language
+    }
+    if let country = properties.country?.trimmingCharacters(in: .whitespacesAndNewlines), !country.isEmpty {
+      payload["country"] = country
+    }
     var device: [String: Any] = [:]
+    if let os = properties.os?.trimmingCharacters(in: .whitespacesAndNewlines), !os.isEmpty {
+      device["os"] = os
+    }
     if let model = properties.model?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty {
       device["model"] = model
     }

@@ -90,7 +90,7 @@ private struct ScheduleHarness {
       tokenProvider: FakeTokenProvider(token: "token"),
       subscriptionStore: InMemorySubscriptionStore(),
       localNotificationScheduler: scheduler,
-      clock: { clock.now }
+      scheduleClock: { clock.now }
     )
     return ScheduleHarness(comraid: comraid, scheduler: scheduler, clock: clock)
   }
