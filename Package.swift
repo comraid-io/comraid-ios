@@ -5,7 +5,6 @@ let package = Package(
   name: "ComRaid",
   platforms: [
     .iOS(.v15),
-    .macOS(.v13),
   ],
   products: [
     .library(name: "ComRaid", targets: ["ComRaid"]),
