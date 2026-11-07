@@ -111,6 +111,54 @@ import Testing
   #expect(harness.transport.requests.single().path == "/mobile/subscriptions/sub-1/session")
 }
 
+@Test func repeatedForegroundWithoutBackgroundSkipsUntilSessionDebounce() async throws {
+  let harness = try await PropertiesHarness.make()
+  harness.store.save(subscriptionId: "sub-1", credential: "cred-1")
+  harness.transport.nextResponse = HttpResponse(
+    statusCode: 200,
+    body: Data(#"{"subscription_id":"sub-1","session_count":3,"last_seen_at":"2026-01-01T00:00:00Z"}"#.utf8)
+  )
+
+  await harness.comraid.handleAppForegroundForTests()
+  #expect(harness.transport.requests.count == 1)
+  harness.transport.clearRequests()
+
+  harness.clock.now += 5 * 60
+  await harness.comraid.handleAppForegroundForTests()
+  #expect(harness.transport.requests.isEmpty)
+
+  harness.clock.now += 25 * 60 + 1
+  await harness.comraid.handleAppForegroundForTests()
+  #expect(harness.transport.requests.single().path == "/mobile/subscriptions/sub-1/session")
+}
+
+@Test func sessionTrackerDebouncesFromLastSessionWhenBackgroundMissing() {
+  let clock = TestClock()
+  var tracker = SessionTracker(debounce: 30 * 60, clock: { clock.now })
+
+  #expect(tracker.shouldRecordSession())
+  tracker.markSessionRecorded()
+
+  clock.now += 5 * 60
+  #expect(!tracker.shouldRecordSession())
+
+  clock.now += 25 * 60 + 1
+  #expect(tracker.shouldRecordSession())
+}
+
+@Test func sessionTrackerConsumesBackgroundAfterRecord() {
+  let clock = TestClock()
+  var tracker = SessionTracker(debounce: 30 * 60, clock: { clock.now })
+  tracker.markSessionRecorded()
+  tracker.onBackground()
+  clock.now += 30 * 60 + 1
+  #expect(tracker.shouldRecordSession())
+  tracker.markSessionRecorded()
+
+  clock.now += 5 * 60
+  #expect(!tracker.shouldRecordSession())
+}
+
 private final class TestClock: @unchecked Sendable {
   var now: TimeInterval = 1_000_000
 }

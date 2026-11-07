@@ -3,6 +3,8 @@ import Foundation
 /// Decides when a foreground should POST `/session`.
 /// A new session is recorded on cold start (no prior session this process) or when
 /// the app returns to foreground after being backgrounded for at least `debounce`.
+/// If background was never observed, debounce against the last recorded session time
+/// so repeated foregrounds do not immediately re-POST.
 struct SessionTracker: Sendable {
   static let defaultDebounce: TimeInterval = 30 * 60
 
@@ -28,10 +30,14 @@ struct SessionTracker: Sendable {
     if let lastBackgroundAt {
       return now - lastBackgroundAt >= debounce
     }
-    return lastSessionAt == nil
+    guard let lastSessionAt else { return true }
+    return now - lastSessionAt >= debounce
   }
 
   mutating func markSessionRecorded() {
     lastSessionAt = clock()
+    // Consume the background signal so later foregrounds debounce from session time
+    // until a new background is observed.
+    lastBackgroundAt = nil
   }
 }
