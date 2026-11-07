@@ -79,6 +79,11 @@ import Testing
   #expect(bridge.contains("func getInitialNotification("))
   #expect(bridge.contains("func presentNotification("))
   #expect(bridge.contains("func setEventEmitter("))
+  #expect(bridge.contains("func onPushTokenRefresh("))
+  #expect(bridge.contains("func pauseTimer("))
+  #expect(bridge.contains("func resumeTimer("))
+  #expect(bridge.contains("func cancelTimer("))
+  #expect(bridge.contains("func timers("))
   #expect(bridge.contains("ComRaid.shared.setDeviceProperties"))
   #expect(bridge.contains("ComRaid.shared.setAttributes"))
   #expect(bridge.contains("ComRaid.shared.acknowledgeDelivered"))
@@ -86,6 +91,11 @@ import Testing
   #expect(bridge.contains("ComRaid.shared.flushAcks"))
   #expect(bridge.contains("ComRaid.shared.getToken"))
   #expect(bridge.contains("ComRaid.shared.presentNotification"))
+  #expect(bridge.contains("ComRaid.shared.onPushTokenRefresh"))
+  #expect(bridge.contains("ComRaid.shared.pauseTimer"))
+  #expect(bridge.contains("ComRaid.shared.resumeTimer"))
+  #expect(bridge.contains("ComRaid.shared.cancelTimer"))
+  #expect(bridge.contains("ComRaid.shared.timers"))
 }
 
 @Test func objcBridgeCarriesPresentationFieldsOnRemoteMessage() throws {

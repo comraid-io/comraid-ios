@@ -31,8 +31,11 @@ public actor ComRaid {
     return center
   }
 
-  public func configure(_ configuration: ComRaidConfiguration) {
-    precondition(!configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "appId is required (cr_app_…)")
+  public func configure(_ configuration: ComRaidConfiguration) throws {
+    let trimmedAppId = configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedAppId.isEmpty else {
+      throw ComRaidError.invalidConfiguration("appId is required (cr_app_…)")
+    }
     self.configuration = configuration
     store = ComRaidStore(suiteName: configuration.storageSuiteName)
     let credentials = KeychainSubscriptionStore(suiteName: configuration.storageSuiteName)
@@ -42,7 +45,7 @@ public actor ComRaid {
     tokenProvider = apns
     let transport = URLSessionHttpTransport(apiBaseURL: configuration.apiBaseURL)
     api = MobileApiClient(
-      appId: configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines),
+      appId: trimmedAppId,
       apnsEnvironment: configuration.apnsEnvironment,
       transport: transport
     )
@@ -65,15 +68,18 @@ public actor ComRaid {
     tokenProvider: any TokenProvider,
     subscriptionStore: any SubscriptionCredentialStore,
     ackQueueStore: (any AckQueueStore)? = nil
-  ) {
-    precondition(!configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "appId is required (cr_app_…)")
+  ) throws {
+    let trimmedAppId = configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedAppId.isEmpty else {
+      throw ComRaidError.invalidConfiguration("appId is required (cr_app_…)")
+    }
     self.configuration = configuration
     store = ComRaidStore(suiteName: configuration.storageSuiteName)
     self.subscriptionStore = subscriptionStore
     self.tokenProvider = tokenProvider
     apnsTokenProvider = nil
     api = MobileApiClient(
-      appId: configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines),
+      appId: trimmedAppId,
       apnsEnvironment: configuration.apnsEnvironment,
       transport: transport
     )

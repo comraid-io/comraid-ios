@@ -179,7 +179,7 @@ private struct RemoteHarness {
     let transport = RecordingTransport()
     let store = InMemorySubscriptionStore()
     let tokens = FakeTokenProvider(token: token)
-    await comraid.configureForTests(
+    try await comraid.configureForTests(
       .init(appId: "cr_app_test", apnsEnvironment: .sandbox),
       transport: transport,
       tokenProvider: tokens,
