@@ -323,6 +323,8 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
       do {
         try await ComRaid.shared.register()
         completion(nil)
+      } catch let error as ComRaidError {
+        completion(error.asNSError())
       } catch {
         completion(error as NSError)
       }

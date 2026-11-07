@@ -125,6 +125,63 @@ public enum ComRaidError: Error, Sendable, Equatable {
   case timerNotPaused
   case persistenceFailed
   case apiError(String)
+  /// APNs device token did not arrive before `register(tokenWaitTimeout:)` elapsed.
+  case tokenTimeout
+}
+
+extension ComRaidError {
+  /// RN / ObjC bridge: promise reject code is the NSError domain (`RNComraidReject`).
+  public func asNSError() -> NSError {
+    let domain: String
+    switch self {
+    case .tokenTimeout:
+      domain = "tokenTimeout"
+    default:
+      domain = "ComRaidError"
+    }
+    return NSError(
+      domain: domain,
+      code: nsErrorCode,
+      userInfo: [NSLocalizedDescriptionKey: localizedDescription]
+    )
+  }
+
+  private var nsErrorCode: Int {
+    switch self {
+    case .notConfigured: return 1
+    case .notReady: return 2
+    case .invalidIdentifier: return 3
+    case .triggerMustBeInFuture: return 4
+    case .timerNotFound: return 5
+    case .timerNotPaused: return 6
+    case .persistenceFailed: return 7
+    case .apiError: return 8
+    case .tokenTimeout: return 9
+    }
+  }
+
+  private var localizedDescription: String {
+    switch self {
+    case .notConfigured:
+      return "ComRaid is not configured"
+    case .notReady:
+      return "ComRaid is not ready"
+    case .invalidIdentifier:
+      return "Invalid identifier"
+    case .triggerMustBeInFuture:
+      return "Trigger must be in the future"
+    case .timerNotFound:
+      return "Timer not found"
+    case .timerNotPaused:
+      return "Timer is not paused"
+    case .persistenceFailed:
+      return "Persistence failed"
+    case .apiError(let message):
+      return message
+    case .tokenTimeout:
+      return "Timed out waiting for the APNs device token"
+    }
+  }
 }
 
 /**
