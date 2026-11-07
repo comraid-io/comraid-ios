@@ -21,6 +21,8 @@ public actor ComRaid {
   private var injectedNotificationCenter: UNUserNotificationCenter?
   /// Flushes queued ACKs on app foreground (NSE / background helpers flush separately).
   private var foregroundFlushObserver: NSObjectProtocol?
+  /// Set when `register` times out waiting for APNs; cleared on success or late auto-register.
+  private var pendingRegisterAfterToken = false
 
   public init(notificationCenter: UNUserNotificationCenter? = nil) {
     self.injectedNotificationCenter = notificationCenter
@@ -59,6 +61,7 @@ public actor ComRaid {
     ackQueue = queue
     deviceProperties = nil
     externalUserId = credentials.externalUserId
+    pendingRegisterAfterToken = false
     SdkConfigStore(suiteName: configuration.storageSuiteName).save(configuration)
     installForegroundFlushObserver()
     Task { await queue.flush() }
@@ -93,6 +96,7 @@ public actor ComRaid {
     )
     deviceProperties = nil
     externalUserId = subscriptionStore.externalUserId
+    pendingRegisterAfterToken = false
   }
 
   func resetForTests() {
@@ -106,6 +110,7 @@ public actor ComRaid {
     ackQueue = nil
     deviceProperties = nil
     externalUserId = nil
+    pendingRegisterAfterToken = false
     RemoteReceiveHub.shared.resetForTests()
   }
 
@@ -137,10 +142,16 @@ public actor ComRaid {
 
   /// Forward the APNs device token from `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`.
   /// When a Subscription credential already exists, calls `/token` automatically.
+  /// When a prior `register` timed out waiting for this token, registers automatically.
   public func setAPNsDeviceToken(_ tokenData: Data) async {
     await apnsTokenProvider?.setDeviceToken(tokenData)
     if let hex = try? await apnsTokenProvider?.currentToken() {
       RemoteReceiveHub.shared.notifyTokenRefresh(hex)
+    }
+    if pendingRegisterAfterToken {
+      pendingRegisterAfterToken = false
+      try? await register(tokenWaitTimeout: 0)
+      return
     }
     if let store = subscriptionStore,
        let subscriptionId = store.subscriptionId, !subscriptionId.isEmpty,
@@ -272,11 +283,24 @@ public actor ComRaid {
   }
 
   /// Fetches the APNs token via TokenProvider and registers a Subscription.
-  public func register() async throws {
+  /// When no APNs token is stored yet, waits up to `tokenWaitTimeout` (default 10 s).
+  /// On timeout throws `tokenTimeout` and registers automatically when the token later arrives.
+  public func register(tokenWaitTimeout: TimeInterval = 10) async throws {
     let api = try requireAPI()
     let tokens = try requireTokenProvider()
     let store = try requireSubscriptionStore()
-    let token = try await tokens.currentToken()
+    let token: String
+    if let apns = apnsTokenProvider {
+      do {
+        token = try await apns.waitForToken(timeout: tokenWaitTimeout)
+      } catch ComRaidError.tokenTimeout {
+        pendingRegisterAfterToken = true
+        throw ComRaidError.tokenTimeout
+      }
+    } else {
+      token = try await tokens.currentToken()
+    }
+    pendingRegisterAfterToken = false
     let result = try await api.register(
       token: token,
       properties: deviceProperties,

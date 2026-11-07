@@ -154,14 +154,14 @@ Requests notification permission. When granted, registers for remote notificatio
 #### `register()`
 
 ```swift
-func register() async throws
+func register(tokenWaitTimeout: TimeInterval = 10) async throws
 ```
 
-Fetches the current APNs token and creates or refreshes a Subscription (`mobileRegisterSubscription`). Sends a persisted Keychain credential when present so a repeat register keeps the same Subscription and Contact. Requires a prior `setAPNsDeviceToken` (or a token already available to the provider).
+Fetches the current APNs token and creates or refreshes a Subscription (`mobileRegisterSubscription`). Sends a persisted Keychain credential when present so a repeat register keeps the same Subscription and Contact. When no APNs token is stored yet, waits up to `tokenWaitTimeout` (default 10 s) for `setAPNsDeviceToken`. On timeout throws `tokenTimeout` and still registers automatically when the token later arrives.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| — | — | — |
+| `tokenWaitTimeout` | `TimeInterval` | How long to wait for the APNs token (default 10) |
 
 **Returns:** `Void`
 
@@ -614,6 +614,7 @@ Public `ComRaidError` cases:
 |------|------|
 | `notConfigured` | Called before `configure` |
 | `notReady` | Missing Subscription credential or Login required (e.g. `setAttributes`) |
+| `tokenTimeout` | APNs token did not arrive before `register` wait elapsed (RN reject code `tokenTimeout`) |
 | `invalidIdentifier` | Empty External user ID |
 | `invalidConfiguration(String)` | Blank App ID on `configure` |
 | `triggerMustBeInFuture` | Invalid schedule/timer duration or past trigger |
