@@ -47,9 +47,32 @@ public enum RemoteNotificationDisplay {
    Notification Service Extension helper for `didReceive(_:withContentHandler:)`.
    The server sets `mutable-content` when a push has an image or action buttons; this
    registers per-button-set categories and attaches `cr_image_url` before the OS draws it.
+   Also enqueues a delivered ACK (and flushes immediately; failures stay queued) using
+   persisted SDK config. Pass the same `storageSuiteName` (App Group) the host used in
+   `configure` so the extension can read config and the ACK queue.
    Returns the original content unchanged when there is nothing to add.
    */
-  public static func enrich(_ request: UNNotificationRequest) async -> UNNotificationContent {
+  public static func enrich(
+    _ request: UNNotificationRequest,
+    storageSuiteName: String? = nil
+  ) async -> UNNotificationContent {
+    await enrich(
+      request,
+      storageSuiteName: storageSuiteName,
+      configStore: nil,
+      ackStore: nil,
+      transport: nil
+    )
+  }
+
+  /// Testable NSE enrich path with injectable ACK dependencies.
+  static func enrich(
+    _ request: UNNotificationRequest,
+    storageSuiteName: String? = nil,
+    configStore: SdkConfigStore?,
+    ackStore: (any AckQueueStore)?,
+    transport: (any HttpTransport)?
+  ) async -> UNNotificationContent {
     let data = PushPayload.fromUserInfo(request.content.userInfo)
     await registerCategories(from: data)
     let attachment: UNNotificationAttachment?
@@ -58,6 +81,13 @@ public enum RemoteNotificationDisplay {
     } else {
       attachment = nil
     }
+    await BackgroundAckHelpers.acknowledgeDelivered(
+      data: data,
+      storageSuiteName: storageSuiteName,
+      configStore: configStore,
+      ackStore: ackStore,
+      transport: transport
+    )
     return applyingEnrichments(to: request, data: data, imageAttachment: attachment)
   }
 

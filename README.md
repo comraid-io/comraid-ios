@@ -10,16 +10,16 @@ Package product/module: **`ComRaid`**. CocoaPods: **`pod 'ComRaid'`**.
 
 ## Install
 
-**Swift Package Manager** — add the package dependency and import `ComRaid`:
+**Swift Package Manager** — add the GitHub package at a SemVer tag with **no `v` prefix** (e.g. `0.1.0`), then import `ComRaid`:
 
 ```swift
 import ComRaid
 ```
 
-**CocoaPods:**
+**CocoaPods** (same version / tag as the podspec):
 
 ```ruby
-pod 'ComRaid'
+pod 'ComRaid', '0.1.0'
 ```
 
 ## Getting started
@@ -154,14 +154,14 @@ Requests notification permission. When granted, registers for remote notificatio
 #### `register()`
 
 ```swift
-func register() async throws
+func register(tokenWaitTimeout: TimeInterval = 10) async throws
 ```
 
-Fetches the current APNs token and creates or refreshes a Subscription (`mobileRegisterSubscription`). Sends a persisted Keychain credential when present so a repeat register keeps the same Subscription and Contact. Requires a prior `setAPNsDeviceToken` (or a token already available to the provider).
+Fetches the current APNs token and creates or refreshes a Subscription (`mobileRegisterSubscription`). Sends a persisted Keychain credential when present so a repeat register keeps the same Subscription and Contact. When no APNs token is stored yet, waits up to `tokenWaitTimeout` (default 10 s) for `setAPNsDeviceToken`. On timeout throws `tokenTimeout` and still registers automatically when the token later arrives.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| — | — | — |
+| `tokenWaitTimeout` | `TimeInterval` | How long to wait for the APNs token (default 10) |
 
 **Returns:** `Void`
 
@@ -569,11 +569,11 @@ Use these to build `UNNotificationContent` and action categories from `cr_*` pay
 | `categoryIdentifier(for:)` | `String` | Fixed `comraid.actions` (matches server APNs category) |
 | `registerCategories(from:)` | `Void` (async) | Merges categories into `UNUserNotificationCenter` |
 | `present(data:)` | `Void` (async throws) | Post a local tray item immediately |
-| `enrich(_:)` | `UNNotificationContent` (async) | Notification Service Extension: attach `cr_image_url`, register `comraid.actions` buttons |
+| `enrich(_:storageSuiteName:)` | `UNNotificationContent` (async) | Notification Service Extension: attach `cr_image_url`, register action buttons, send delivered ACK (pass App Group `storageSuiteName`) |
 
 #### Images and action buttons (Notification Service Extension)
 
-The server sets `mutable-content` when a push has an image or action buttons. iOS only shows the image (and, on a cold device, the buttons) when a Notification Service Extension adds them. Add an extension target that links `ComRaid`:
+The server sets `mutable-content` when a push has an image or action buttons. iOS only shows the image (and, on a cold device, the buttons) when a Notification Service Extension adds them. The same `enrich` path sends the delivered ACK. Share an App Group as `storageSuiteName` between the app and the extension so config and the ACK queue are readable. Add an extension target that links `ComRaid`:
 
 ```swift
 import ComRaid
@@ -584,12 +584,19 @@ final class NotificationService: UNNotificationServiceExtension {
     _ request: UNNotificationRequest,
     withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
   ) {
-    Task { contentHandler(await RemoteNotificationDisplay.enrich(request)) }
+    Task {
+      contentHandler(
+        await RemoteNotificationDisplay.enrich(
+          request,
+          storageSuiteName: "group.com.example.app.comraid"
+        )
+      )
+    }
   }
 }
 ```
 
-`ComRaid` is extension-safe: `requestPermission`, `requestAuthorization` and the bridge's `requestNotificationPermission` are unavailable in app extensions, and nothing else in the module needs `UIApplication`. Images are downloaded over http(s) with a 10 s timeout and a 5 MB cap (JPEG, PNG, GIF, HEIC); on failure the original content is shown. ObjC hosts can call `ComraidBridge.shared.enrichNotificationRequest(_:completion:)`.
+`ComRaid` is extension-safe: `requestPermission`, `requestAuthorization` and the bridge's `requestNotificationPermission` are unavailable in app extensions, and nothing else in the module needs `UIApplication`. Images are downloaded over http(s) with a 10 s timeout and a 5 MB cap (JPEG, PNG, GIF, HEIC); on failure the original content is shown. ObjC hosts can call `ComraidBridge.shared.enrichNotificationRequest(_:storageSuiteName:completion:)`.
 
 ### Models
 
@@ -614,6 +621,7 @@ Public `ComRaidError` cases:
 |------|------|
 | `notConfigured` | Called before `configure` |
 | `notReady` | Missing Subscription credential or Login required (e.g. `setAttributes`) |
+| `tokenTimeout` | APNs token did not arrive before `register` wait elapsed (RN reject code `tokenTimeout`) |
 | `invalidIdentifier` | Empty External user ID |
 | `invalidConfiguration(String)` | Blank App ID on `configure` |
 | `triggerMustBeInFuture` | Invalid schedule/timer duration or past trigger |
@@ -632,10 +640,32 @@ Direct `RemoteNotificationDisplay` builders stay Swift-only. Prefer the Swift `C
 
 `mobileSubscriptionSession` (`POST /mobile/subscriptions/{id}/session`) has **no** iOS SDK wrapper. Call it via the Mobile HTTP API / [API Reference](https://docs.comraid.io/api-reference) until product work adds an SDK method — do not invent a client method from this README.
 
-## Tests
+## Releasing
 
-`Package.swift` is iOS-only (no macOS host target). Run tests on a simulator:
+Git tags are the CocoaPods / SPM release version. Use SemVer **without** a `v` prefix so the tag matches `ComRaid.podspec` `source.tag` (`spec.version.to_s`):
+
+| Tag | Podspec / SPM |
+|-----|---------------|
+| `0.1.0` | `spec.version = "0.1.0"` → fetches `tag: "0.1.0"` |
+
+Do **not** tag `v0.1.0`. Bump `ComRaid.podspec` `spec.version` first, keep `Package.swift` / podspec minimum iOS at **15.0**, then:
 
 ```bash
-xcodebuild -scheme ComRaid -destination 'platform=iOS Simulator,name=iPhone 16' test
+pod lib lint ComRaid.podspec
+xcodebuild -scheme ComRaid -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.4' test
+git tag 0.1.0
+git push origin 0.1.0
+```
+
+SPM consumers resolve the same tag from the GitHub repo. CocoaPods trunk publish (`pod trunk push`) waits on CI secrets and the human release checklist (v1-tracker #30) — pressing publish is not part of this SDK checkout.
+
+Draft workflows under `.github/workflows/` lint on PRs and run `pod trunk push` on a SemVer tag once Actions / branch protection for this repo are enabled (v1-tracker #35).
+
+## Tests
+
+`Package.swift` is iOS-only (no macOS host target). Host `swift test` is not supported; run the SwiftPM scheme on a simulator (pin `OS=` when multiple runtimes exist):
+
+```bash
+xcodebuild -scheme ComRaid -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.4' build test
+pod lib lint ComRaid.podspec
 ```
