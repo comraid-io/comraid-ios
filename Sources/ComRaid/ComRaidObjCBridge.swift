@@ -122,15 +122,26 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
     }
   }
 
-  /// Notification Service Extension helper; see `RemoteNotificationDisplay.enrich(_:)`.
+  /// Notification Service Extension helper; see `RemoteNotificationDisplay.enrich(_:storageSuiteName:)`.
   @objc public func enrichNotificationRequest(
     _ request: UNNotificationRequest,
     completion: @escaping @Sendable (UNNotificationContent) -> Void
   ) {
+    enrichNotificationRequest(request, storageSuiteName: nil, completion: completion)
+  }
+
+  /// NSE helper with App Group suite so delivered ACK can read shared SDK config.
+  @objc public func enrichNotificationRequest(
+    _ request: UNNotificationRequest,
+    storageSuiteName: String?,
+    completion: @escaping @Sendable (UNNotificationContent) -> Void
+  ) {
     // UNNotificationRequest is immutable but not marked Sendable.
     nonisolated(unsafe) let request = request
+    let suite = storageSuiteName?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let resolvedSuite = (suite?.isEmpty == false) ? suite : nil
     Task {
-      completion(await RemoteNotificationDisplay.enrich(request))
+      completion(await RemoteNotificationDisplay.enrich(request, storageSuiteName: resolvedSuite))
     }
   }
 
