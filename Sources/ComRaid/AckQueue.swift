@@ -21,6 +21,10 @@ struct QueuedAck: Equatable, Sendable {
 
 /// Durable delivery ACK queue. Persists so notification handlers can enqueue/flush
 /// without a foreground `ComRaid` init in this process lifetime.
+///
+/// Enqueue and flush are serialized by the actor. At most one flush performs network
+/// I/O at a time; items claimed for a flush are removed from the store before `await send`
+/// so reentrant enqueues across suspension points survive the final save.
 actor AckQueue {
   private let store: any AckQueueStore
   private let transport: any HttpTransport
@@ -29,6 +33,8 @@ actor AckQueue {
   private let maxAgeMs: Int64
   private let maxFlush: Int
   nonisolated private let key: String
+  nonisolated private let sentKey: String
+  private var flushInFlight = false
 
   private static let defaultMaxSize = 100
   private static let defaultMaxAgeMs: Int64 = 7 * 24 * 60 * 60 * 1000
@@ -45,6 +51,7 @@ actor AckQueue {
   ) {
     let base = apiBaseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     self.key = "comraid:\(base):ack-queue"
+    self.sentKey = "comraid:\(base):ack-sent"
     self.store = store
     self.transport = transport
     self.clock = clock
@@ -55,6 +62,9 @@ actor AckQueue {
 
   nonisolated func storageKey() -> String { key }
 
+  nonisolated func sentStorageKey() -> String { sentKey }
+
+  @discardableResult
   func enqueueFromPayload(
     kind: AckKind,
     data: [String: String]?,
@@ -82,6 +92,9 @@ actor AckQueue {
 
   func enqueue(_ event: QueuedAck) {
     let now = clock()
+    pruneSent(now)
+    if wasSentRecently(event, now: now) { return }
+
     var items = load().filter { now - $0.enqueuedAt <= maxAgeMs }
     let key = eventKey(event)
     items = items.filter { eventKey($0) != key }
@@ -93,8 +106,13 @@ actor AckQueue {
   }
 
   func flush() async {
+    if flushInFlight { return }
+    flushInFlight = true
+    defer { flushInFlight = false }
+
     let now = clock()
-    var items = load().filter { now - $0.enqueuedAt <= maxAgeMs }
+    pruneSent(now)
+    let items = load().filter { now - $0.enqueuedAt <= maxAgeMs }
     let ready = Array(items.filter { $0.nextAttemptAt <= now }.prefix(maxFlush))
     if ready.isEmpty {
       save(items)
@@ -102,16 +120,19 @@ actor AckQueue {
     }
 
     let readyKeys = Set(ready.map(eventKey))
-    var remaining = items.filter { !readyKeys.contains(eventKey($0)) }
+    // Claim ready items before any await so reentrant enqueues keep their rows.
+    save(items.filter { !readyKeys.contains(eventKey($0)) })
 
+    var retries: [QueuedAck] = []
+    var finished: [QueuedAck] = []
     for event in ready {
       switch await send(event) {
       case .success, .drop:
-        break
+        finished.append(event)
       case .retry(let nextAttemptAt):
         let attempts = event.attempts + 1
         let nextAt = nextAttemptAt ?? (clock() + min(60_000, Int64(1000.0 * pow(2.0, Double(min(attempts, 5))))))
-        remaining.append(
+        retries.append(
           QueuedAck(
             deliveryId: event.deliveryId,
             attributionToken: event.attributionToken,
@@ -125,6 +146,18 @@ actor AckQueue {
       }
     }
 
+    let mergeNow = clock()
+    for event in finished {
+      markSent(event, now: mergeNow)
+    }
+
+    var remaining = load().filter { mergeNow - $0.enqueuedAt <= maxAgeMs }
+    for retry in retries {
+      if wasSentRecently(retry, now: mergeNow) { continue }
+      let key = eventKey(retry)
+      remaining = remaining.filter { eventKey($0) != key }
+      remaining.append(retry)
+    }
     while remaining.count > maxSize {
       remaining.removeFirst()
     }
@@ -214,8 +247,47 @@ actor AckQueue {
     store.set(key, value: raw)
   }
 
+  private func loadSent() -> [String: Int64] {
+    guard let raw = store.get(sentKey),
+          let data = raw.data(using: .utf8),
+          let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+      return [:]
+    }
+    var out: [String: Int64] = [:]
+    for obj in array {
+      guard let key = obj["key"] as? String, !key.isEmpty else { continue }
+      out[key] = int64(obj["sentAt"])
+    }
+    return out
+  }
+
+  private func saveSent(_ sent: [String: Int64]) {
+    let array: [[String: Any]] = sent.map { key, sentAt in
+      ["key": key, "sentAt": sentAt]
+    }
+    guard let data = try? JSONSerialization.data(withJSONObject: array),
+          let raw = String(data: data, encoding: .utf8) else { return }
+    store.set(sentKey, value: raw)
+  }
+
+  private func pruneSent(_ now: Int64) {
+    saveSent(loadSent().filter { now - $0.value <= maxAgeMs })
+  }
+
+  private func wasSentRecently(_ event: QueuedAck, now: Int64) -> Bool {
+    guard let sentAt = loadSent()[eventKey(event)] else { return false }
+    return now - sentAt <= maxAgeMs
+  }
+
+  private func markSent(_ event: QueuedAck, now: Int64) {
+    var sent = loadSent()
+    sent[eventKey(event)] = now
+    saveSent(sent.filter { now - $0.value <= maxAgeMs })
+  }
+
+  /// Dedupe key: Delivery id + kind (opened is one per Delivery; action id ignored).
   private func eventKey(_ event: QueuedAck) -> String {
-    "\(event.kind.rawValue):\(event.deliveryId):\(event.actionId ?? "")"
+    "\(event.kind.rawValue):\(event.deliveryId)"
   }
 
   private func int64(_ value: Any?) -> Int64 {

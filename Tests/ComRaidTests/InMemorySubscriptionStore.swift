@@ -5,6 +5,7 @@ final class InMemorySubscriptionStore: SubscriptionCredentialStore, @unchecked S
   private let lock = NSLock()
   private var _subscriptionId: String?
   private var _credential: String?
+  private var _externalUserId: String?
 
   var subscriptionId: String? {
     lock.withLock { _subscriptionId }
@@ -12,6 +13,10 @@ final class InMemorySubscriptionStore: SubscriptionCredentialStore, @unchecked S
 
   var credential: String? {
     lock.withLock { _credential }
+  }
+
+  var externalUserId: String? {
+    lock.withLock { _externalUserId }
   }
 
   func save(subscriptionId: String, credential: String?) {
@@ -23,10 +28,15 @@ final class InMemorySubscriptionStore: SubscriptionCredentialStore, @unchecked S
     }
   }
 
+  func setExternalUserId(_ externalUserId: String?) {
+    lock.withLock { _externalUserId = externalUserId }
+  }
+
   func clear() {
     lock.withLock {
       _subscriptionId = nil
       _credential = nil
+      _externalUserId = nil
     }
   }
 }

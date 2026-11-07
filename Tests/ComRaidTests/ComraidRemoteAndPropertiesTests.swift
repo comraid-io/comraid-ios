@@ -27,6 +27,28 @@ import Testing
   #expect(device["manufacturer"] as? String == "Apple")
 }
 
+@Test func setAttributesNullValueIsSentAsJSONNull() async throws {
+  let harness = try await RemoteHarness.make()
+  harness.store.save(subscriptionId: "sub-1", credential: "cred-1")
+  harness.transport.enqueue(
+    HttpResponse(
+      statusCode: 200,
+      body: Data(#"{"subscription_id":"sub-1","contact_id":"c-1","external_user_id":"user_123","anonymous":false,"verified":false}"#.utf8)
+    ),
+    HttpResponse(
+      statusCode: 200,
+      body: Data(#"{"contact_id":"c-1","external_user_id":"user_123","updated_attributes":["plan"]}"#.utf8)
+    )
+  )
+
+  try await harness.comraid.login(externalUserId: "user_123")
+  try await harness.comraid.setAttributes(["plan": NSNull()])
+
+  let body = try JSONSerialization.jsonObject(with: #require(harness.transport.requests[1].body)) as! [String: Any]
+  let attrs = body["attributes"] as! [String: Any]
+  #expect(attrs["plan"] is NSNull)
+}
+
 @Test func setAttributesPutsContactAttributesAfterLogin() async throws {
   let harness = try await RemoteHarness.make()
   harness.store.save(subscriptionId: "sub-1", credential: "cred-1")
@@ -158,12 +180,12 @@ import Testing
   #expect(content.title == "Hello")
   #expect(content.body == "World")
   #expect(RemoteNotificationDisplay.actionsCategoryIdentifier == "comraid.actions")
-  #expect(content.categoryIdentifier == "comraid.actions")
   #expect(content.userInfo["cr_delivery_id"] as? String == "d1")
 
   let categories = RemoteNotificationDisplay.categories(from: data)
   #expect(categories.count == 1)
-  #expect(categories[0].identifier == "comraid.actions")
+  #expect(content.categoryIdentifier == categories[0].identifier)
+  #expect(categories[0].identifier.hasPrefix("comraid.actions."))
   #expect(categories[0].actions.count == 1)
   #expect(categories[0].actions[0].identifier == "accept")
   #expect(categories[0].actions[0].title == "Accept")
@@ -179,7 +201,7 @@ private struct RemoteHarness {
     let transport = RecordingTransport()
     let store = InMemorySubscriptionStore()
     let tokens = FakeTokenProvider(token: token)
-    await comraid.configureForTests(
+    try await comraid.configureForTests(
       .init(appId: "cr_app_test", apnsEnvironment: .sandbox),
       transport: transport,
       tokenProvider: tokens,
