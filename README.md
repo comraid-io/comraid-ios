@@ -10,16 +10,16 @@ Package product/module: **`ComRaid`**. CocoaPods: **`pod 'ComRaid'`**.
 
 ## Install
 
-**Swift Package Manager** — add the package dependency and import `ComRaid`:
+**Swift Package Manager** — add the GitHub package at a SemVer tag with **no `v` prefix** (e.g. `0.1.0`), then import `ComRaid`:
 
 ```swift
 import ComRaid
 ```
 
-**CocoaPods:**
+**CocoaPods** (same version / tag as the podspec):
 
 ```ruby
-pod 'ComRaid'
+pod 'ComRaid', '0.1.0'
 ```
 
 ## Getting started
@@ -632,10 +632,32 @@ Direct `RemoteNotificationDisplay` builders stay Swift-only. Prefer the Swift `C
 
 `mobileSubscriptionSession` (`POST /mobile/subscriptions/{id}/session`) has **no** iOS SDK wrapper. Call it via the Mobile HTTP API / [API Reference](https://docs.comraid.io/api-reference) until product work adds an SDK method — do not invent a client method from this README.
 
-## Tests
+## Releasing
 
-`Package.swift` is iOS-only (no macOS host target). Run tests on a simulator:
+Git tags are the CocoaPods / SPM release version. Use SemVer **without** a `v` prefix so the tag matches `ComRaid.podspec` `source.tag` (`spec.version.to_s`):
+
+| Tag | Podspec / SPM |
+|-----|---------------|
+| `0.1.0` | `spec.version = "0.1.0"` → fetches `tag: "0.1.0"` |
+
+Do **not** tag `v0.1.0`. Bump `ComRaid.podspec` `spec.version` first, keep `Package.swift` / podspec minimum iOS at **15.0**, then:
 
 ```bash
-xcodebuild -scheme ComRaid -destination 'platform=iOS Simulator,name=iPhone 16' test
+pod lib lint ComRaid.podspec
+xcodebuild -scheme ComRaid -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.4' test
+git tag 0.1.0
+git push origin 0.1.0
+```
+
+SPM consumers resolve the same tag from the GitHub repo. CocoaPods trunk publish (`pod trunk push`) waits on CI secrets and the human release checklist (v1-tracker #30) — pressing publish is not part of this SDK checkout.
+
+Draft workflows under `.github/workflows/` lint on PRs and run `pod trunk push` on a SemVer tag once Actions / branch protection for this repo are enabled (v1-tracker #35).
+
+## Tests
+
+`Package.swift` is iOS-only (no macOS host target). Host `swift test` is not supported; run the SwiftPM scheme on a simulator (pin `OS=` when multiple runtimes exist):
+
+```bash
+xcodebuild -scheme ComRaid -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.4' build test
+pod lib lint ComRaid.podspec
 ```
