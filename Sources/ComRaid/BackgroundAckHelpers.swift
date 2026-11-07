@@ -1,7 +1,8 @@
 import Foundation
 
-/// Builds an ACK queue from persisted SDK config so notification handlers can
-/// enqueue/flush without requiring a foreground `ComRaid.configure` in this process.
+/// Builds an ACK queue from persisted SDK config so notification handlers /
+/// the Notification Service Extension can enqueue/flush without a foreground
+/// `ComRaid.configure` in this process (no `BGTaskScheduler`).
 enum BackgroundAckHelpers {
   static func makeQueue(
     configStore: SdkConfigStore = SdkConfigStore(),
@@ -12,6 +13,18 @@ enum BackgroundAckHelpers {
     let store = ackStore ?? UserDefaultsAckQueueStore(suiteName: config.storageSuiteName)
     let http = transport ?? URLSessionHttpTransport(apiBaseURL: config.apiBaseURL)
     return AckQueue(apiBaseURL: config.apiBaseURL, store: store, transport: http)
+  }
+
+  /// Drain the durable ACK queue (NSE and other extension entry points).
+  static func flushQueued(
+    configStore: SdkConfigStore = SdkConfigStore(),
+    ackStore: (any AckQueueStore)? = nil,
+    transport: (any HttpTransport)? = nil
+  ) async {
+    guard let queue = makeQueue(configStore: configStore, ackStore: ackStore, transport: transport) else {
+      return
+    }
+    await queue.flush()
   }
 
   /// Handle an incoming remote notification: enqueue delivered ACK and register actions.
