@@ -612,7 +612,7 @@ final class NotificationService: UNNotificationServiceExtension {
 |------|------|
 | `ComRaidConfiguration` | App ID, API base URL, `APNsEnvironment`, optional storage suite, `displayForegroundNotifications` |
 | `APNsEnvironment` | `.sandbox` / `.production` |
-| `DeviceProperties` | Subscription Properties for register / token refresh |
+| `DeviceProperties` | Overrides for auto-collected Properties on register / token / session |
 | `RemoteMessageEvent` / `RemoteMessageAction` | RNFirebase-shaped receive/open payload (`imageUrl`, `subtitle`, `sound`, `badge`, `threadId`, `androidChannelId`, `priority`) |
 | `ComRaidListenerToken` | Opaque token for removing receive listeners |
 | `RemoteDisplayPolicy` | Foreground presentation options for data_only / alert |
