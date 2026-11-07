@@ -16,6 +16,9 @@ public actor ComRaid {
   private var ackQueue: AckQueue?
   private var deviceProperties: DeviceProperties?
   private var externalUserId: String?
+  private var deviceInfoProvider: DeviceInfoProvider = { SystemDeviceInfo.collect() }
+  private var sessionTracker = SessionTracker()
+  private var lifecycleObserversInstalled = false
   /// Nil until first use so unit tests that only exercise the identity HTTP seam
   /// never touch `UNUserNotificationCenter.current()` (crashes under SwiftPM's helper).
   private var injectedNotificationCenter: UNUserNotificationCenter?
@@ -54,7 +57,10 @@ public actor ComRaid {
     ackQueue = queue
     deviceProperties = nil
     externalUserId = credentials.externalUserId
+    deviceInfoProvider = { SystemDeviceInfo.collect() }
+    sessionTracker = SessionTracker()
     SdkConfigStore(suiteName: configuration.storageSuiteName).save(configuration)
+    installLifecycleObserversIfNeeded()
     Task { await queue.flush() }
   }
 
@@ -64,7 +70,9 @@ public actor ComRaid {
     transport: any HttpTransport,
     tokenProvider: any TokenProvider,
     subscriptionStore: any SubscriptionCredentialStore,
-    ackQueueStore: (any AckQueueStore)? = nil
+    ackQueueStore: (any AckQueueStore)? = nil,
+    deviceInfoProvider: @escaping DeviceInfoProvider = { DeviceProperties() },
+    clock: @escaping @Sendable () -> TimeInterval = { Date().timeIntervalSince1970 }
   ) {
     precondition(!configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "appId is required (cr_app_…)")
     self.configuration = configuration
@@ -84,6 +92,8 @@ public actor ComRaid {
     )
     deviceProperties = nil
     externalUserId = subscriptionStore.externalUserId
+    self.deviceInfoProvider = deviceInfoProvider
+    sessionTracker = SessionTracker(clock: clock)
   }
 
   func resetForTests() {
@@ -96,7 +106,20 @@ public actor ComRaid {
     ackQueue = nil
     deviceProperties = nil
     externalUserId = nil
+    deviceInfoProvider = { SystemDeviceInfo.collect() }
+    sessionTracker = SessionTracker()
+    lifecycleObserversInstalled = false
     RemoteReceiveHub.shared.resetForTests()
+  }
+
+  /// Test seam: simulate process foreground without UIKit notifications.
+  func handleAppForegroundForTests() async {
+    await onAppForeground()
+  }
+
+  /// Test seam: simulate process background without UIKit notifications.
+  func handleAppBackgroundForTests() {
+    sessionTracker.onBackground()
   }
 
   /// Forward the APNs device token from `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`.
@@ -243,10 +266,11 @@ public actor ComRaid {
     let token = try await tokens.currentToken()
     let result = try await api.register(
       token: token,
-      properties: deviceProperties,
+      properties: resolvedProperties(),
       subscriptionCredential: store.credential
     )
     store.save(subscriptionId: result.subscriptionId, credential: result.credential)
+    sessionTracker.markSessionRecorded()
   }
 
   /// Token rotation: replace-token when credential exists, else full register.
@@ -260,15 +284,16 @@ public actor ComRaid {
         subscriptionId: subscriptionId,
         credential: credential,
         token: token,
-        properties: deviceProperties
+        properties: resolvedProperties()
       )
     } else {
       let result = try await api.register(
         token: token,
-        properties: deviceProperties,
+        properties: resolvedProperties(),
         subscriptionCredential: nil
       )
       store.save(subscriptionId: result.subscriptionId, credential: result.credential)
+      sessionTracker.markSessionRecorded()
     }
   }
 
@@ -298,7 +323,10 @@ public actor ComRaid {
     try await register()
   }
 
-  /// Persist Subscription device Properties for the next register / token refresh.
+  /**
+   Override automatically collected Properties for subsequent register / token /
+   session calls. Nil fields keep the auto-collected value.
+   */
   public func setDeviceProperties(_ properties: DeviceProperties) {
     _ = try? requireConfigured()
     deviceProperties = properties
@@ -640,6 +668,59 @@ public actor ComRaid {
       throw ComRaidError.notReady
     }
     return (subscriptionId, credential)
+  }
+
+  private func resolvedProperties() -> DeviceProperties {
+    mergeDeviceProperties(auto: deviceInfoProvider(), override: deviceProperties)
+  }
+
+  private func installLifecycleObserversIfNeeded() {
+    guard !lifecycleObserversInstalled else { return }
+    lifecycleObserversInstalled = true
+    #if canImport(UIKit) && !os(watchOS)
+    let center = NotificationCenter.default
+    center.addObserver(
+      forName: UIApplication.didEnterBackgroundNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      guard let self else { return }
+      Task { await self.handleDidEnterBackground() }
+    }
+    // didBecomeActive covers cold start and return-from-background; SessionTracker debounces.
+    center.addObserver(
+      forName: UIApplication.didBecomeActiveNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      guard let self else { return }
+      Task { await self.onAppForeground() }
+    }
+    #endif
+  }
+
+  private func handleDidEnterBackground() {
+    sessionTracker.onBackground()
+  }
+
+  private func onAppForeground() async {
+    guard sessionTracker.shouldRecordSession() else { return }
+    guard let api,
+          let store = subscriptionStore,
+          let subscriptionId = store.subscriptionId, !subscriptionId.isEmpty,
+          let credential = store.credential, !credential.isEmpty else {
+      return
+    }
+    do {
+      try await api.session(
+        subscriptionId: subscriptionId,
+        credential: credential,
+        properties: resolvedProperties()
+      )
+      sessionTracker.markSessionRecorded()
+    } catch {
+      // Best-effort; next eligible foreground retries.
+    }
   }
 }
 

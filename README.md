@@ -232,17 +232,33 @@ try await ComRaid.shared.login(externalUserId: "user_123")
 try await ComRaid.shared.setAttributes(["plan": "premium", "tier": 2])
 ```
 
+#### Automatic Properties and sessions
+
+On `register` and on each eligible foreground the SDK sends:
+
+| Field | Source |
+|-------|--------|
+| `app_version` | Host `CFBundleShortVersionString` |
+| `sdk_version` | ComRaid iOS library version |
+| `device.os` / `device.os_version` / `device.model` | `UIDevice` + hardware model id |
+| `locale` / `language` / `country` | Device locale / region |
+| `timezone` | IANA id from the device timezone |
+
+Foreground session POSTs are debounced (~30 minutes since last background). There is
+**no** public `session` method.
+
 #### `setDeviceProperties(_:)`
 
 ```swift
 func setDeviceProperties(_ properties: DeviceProperties)
 ```
 
-Caches Subscription device Properties for the next `register` / token refresh (`app_version` + `device` object).
+Optional overrides for automatically collected Properties on the next register / token /
+session call. Nil fields keep the auto-collected value.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `properties` | `DeviceProperties` | Optional `appVersion`, `model`, `osVersion`, `extras` |
+| `properties` | `DeviceProperties` | Optional overrides (`appVersion`, `sdkVersion`, `model`, `os`, `osVersion`, `locale`, `timezone`, `language`, `country`, `extras`) |
 
 **Returns:** `Void`
 
@@ -626,9 +642,11 @@ Public `ComRaidError` cases:
 
 It does **not** mirror full Swift parity (for example timer pause/resume/list, `onPushTokenRefresh`, or direct `RemoteNotificationDisplay` builders). Prefer the Swift `ComRaid` actor when possible.
 
-## Not wrapped (HTTP-only)
+## Sessions
 
-`mobileSubscriptionSession` (`POST /mobile/subscriptions/{id}/session`) has **no** iOS SDK wrapper. Call it via the Mobile HTTP API / [API Reference](https://docs.comraid.io/api-reference) until product work adds an SDK method — do not invent a client method from this README.
+`POST /mobile/subscriptions/{id}/session` runs automatically from the SDK on eligible
+foregrounds (see Automatic Properties and sessions). Hosts should not call it directly
+and should not invent a public client method.
 
 ## Tests
 
