@@ -27,6 +27,28 @@ import Testing
   #expect(device["manufacturer"] as? String == "Apple")
 }
 
+@Test func setAttributesNullValueIsSentAsJSONNull() async throws {
+  let harness = try await RemoteHarness.make()
+  harness.store.save(subscriptionId: "sub-1", credential: "cred-1")
+  harness.transport.enqueue(
+    HttpResponse(
+      statusCode: 200,
+      body: Data(#"{"subscription_id":"sub-1","contact_id":"c-1","external_user_id":"user_123","anonymous":false,"verified":false}"#.utf8)
+    ),
+    HttpResponse(
+      statusCode: 200,
+      body: Data(#"{"contact_id":"c-1","external_user_id":"user_123","updated_attributes":["plan"]}"#.utf8)
+    )
+  )
+
+  try await harness.comraid.login(externalUserId: "user_123")
+  try await harness.comraid.setAttributes(["plan": NSNull()])
+
+  let body = try JSONSerialization.jsonObject(with: #require(harness.transport.requests[1].body)) as! [String: Any]
+  let attrs = body["attributes"] as! [String: Any]
+  #expect(attrs["plan"] is NSNull)
+}
+
 @Test func setAttributesPutsContactAttributesAfterLogin() async throws {
   let harness = try await RemoteHarness.make()
   harness.store.save(subscriptionId: "sub-1", credential: "cred-1")
