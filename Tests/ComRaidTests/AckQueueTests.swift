@@ -206,6 +206,103 @@ import Testing
   #expect(transport.requests.isEmpty)
 }
 
+@Test func enqueueDuringFlushSurvivesFinalSave() async {
+  let storage = InMemoryAckQueueStore()
+  let gate = AsyncGate()
+  let transport = GatedTransport(gate: gate)
+  let queue = AckQueue(
+    apiBaseURL: URL(string: "https://api.example.com")!,
+    store: storage,
+    transport: transport,
+    clock: { 1_000_000 }
+  )
+  _ = await queue.enqueueFromPayload(
+    kind: .delivered,
+    data: ["cr_delivery_id": "d-flush", "cr_attribution_token": "t1"]
+  )
+
+  async let flushDone: Void = queue.flush()
+  await gate.waitUntilEntered()
+  _ = await queue.enqueueFromPayload(
+    kind: .opened,
+    data: ["cr_delivery_id": "d-during", "cr_attribution_token": "t2"]
+  )
+  await gate.open()
+  await flushDone
+
+  let remaining = try! JSONSerialization.jsonObject(with: Data(storage.get(queue.storageKey())!.utf8)) as! [[String: Any]]
+  #expect(remaining.count == 1)
+  #expect(remaining[0]["deliveryId"] as? String == "d-during")
+  #expect(remaining[0]["kind"] as? String == "opened")
+}
+
+@Test func twoConcurrentFlushesSendEachAckOnce() async {
+  let storage = InMemoryAckQueueStore()
+  let gate = AsyncGate()
+  let transport = GatedTransport(gate: gate)
+  let queue = AckQueue(
+    apiBaseURL: URL(string: "https://api.example.com")!,
+    store: storage,
+    transport: transport,
+    clock: { 1_000_000 }
+  )
+  _ = await queue.enqueueFromPayload(
+    kind: .delivered,
+    data: ["cr_delivery_id": "d-once", "cr_attribution_token": "t"]
+  )
+
+  async let first: Void = queue.flush()
+  await gate.waitUntilEntered()
+  async let second: Void = queue.flush()
+  // Give the second flush a chance to observe flushInFlight before network resumes.
+  try? await Task.sleep(nanoseconds: 50_000_000)
+  await gate.open()
+  await first
+  await second
+
+  #expect(transport.requestCount() == 1)
+  #expect(storage.get(queue.storageKey()) == "[]")
+}
+
+@Test func duplicateOpenedIsDedupedByDeliveryId() async {
+  let storage = InMemoryAckQueueStore()
+  let transport = RecordingTransport()
+  let queue = AckQueue(
+    apiBaseURL: URL(string: "https://api.example.com")!,
+    store: storage,
+    transport: transport,
+    clock: { 1_000_000 }
+  )
+  let data = ["cr_delivery_id": "d-open", "cr_attribution_token": "t"]
+  _ = await queue.enqueueFromPayload(kind: .opened, data: data, actionId: nil)
+  _ = await queue.enqueueFromPayload(kind: .opened, data: data, actionId: "accept")
+
+  let remaining = try! JSONSerialization.jsonObject(with: Data(storage.get(queue.storageKey())!.utf8)) as! [[String: Any]]
+  #expect(remaining.count == 1)
+  #expect(remaining[0]["kind"] as? String == "opened")
+  #expect(remaining[0]["deliveryId"] as? String == "d-open")
+}
+
+@Test func alreadySentAckIsNotReenqueuedWithinTTL() async {
+  let storage = InMemoryAckQueueStore()
+  let transport = RecordingTransport()
+  transport.nextResponse = HttpResponse(statusCode: 200, body: Data("{}".utf8))
+  let queue = AckQueue(
+    apiBaseURL: URL(string: "https://api.example.com")!,
+    store: storage,
+    transport: transport,
+    clock: { 1_000_000 }
+  )
+  let data = ["cr_delivery_id": "d-sent", "cr_attribution_token": "t"]
+  _ = await queue.enqueueFromPayload(kind: .opened, data: data)
+  await queue.flush()
+  #expect(storage.get(queue.storageKey()) == "[]")
+
+  _ = await queue.enqueueFromPayload(kind: .opened, data: data, actionId: "accept")
+  #expect(storage.get(queue.storageKey()) == "[]")
+  #expect(transport.requests.count == 1)
+}
+
 private final class MutableClock: @unchecked Sendable {
   var now: Int64
   init(_ now: Int64) { self.now = now }
@@ -239,5 +336,56 @@ private final class RecordingTransport: HttpTransport, @unchecked Sendable {
       guard let nextResponse else { fatalError("No response configured") }
       return nextResponse
     }
+  }
+}
+
+/// Suspends the first `execute` until `open()` so tests can interleave actor work across `await send`.
+private actor AsyncGate {
+  private var enteredContinuation: CheckedContinuation<Void, Never>?
+  private var entered = false
+  private var openContinuation: CheckedContinuation<Void, Never>?
+  private var isOpen = false
+
+  func waitUntilEntered() async {
+    if entered { return }
+    await withCheckedContinuation { continuation in
+      enteredContinuation = continuation
+    }
+  }
+
+  func enterAndWait() async {
+    entered = true
+    enteredContinuation?.resume()
+    enteredContinuation = nil
+    if isOpen { return }
+    await withCheckedContinuation { continuation in
+      openContinuation = continuation
+    }
+  }
+
+  func open() {
+    isOpen = true
+    openContinuation?.resume()
+    openContinuation = nil
+  }
+}
+
+private final class GatedTransport: HttpTransport, @unchecked Sendable {
+  private let gate: AsyncGate
+  private let lock = NSLock()
+  private var count = 0
+
+  init(gate: AsyncGate) {
+    self.gate = gate
+  }
+
+  func requestCount() -> Int {
+    lock.withLock { count }
+  }
+
+  func execute(_ request: HttpRequest) async throws -> HttpResponse {
+    lock.withLock { count += 1 }
+    await gate.enterAndWait()
+    return HttpResponse(statusCode: 200, body: Data("{}".utf8))
   }
 }

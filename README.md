@@ -55,7 +55,7 @@ try await ComRaid.shared.optOut() // Contact Opted out of the push Channel (all 
 try await ComRaid.shared.optIn()
 ```
 
-Logout makes the Subscription Inactive; Opted out is Contact × Channel and independent of Inactive. On APNs token refresh, call `setAPNsDeviceToken` then `onPushTokenRefresh()` (preserves Subscription identity when a credential exists). Wire field is `external_user_id` (never `external_id`).
+Logout makes the Subscription Inactive and clears Keychain identity; the SDK then registers a fresh Subscription. Opted out is Contact × Channel and independent of Inactive. Forward APNs tokens with `setAPNsDeviceToken` — when a Subscription credential already exists, the SDK calls `/token` automatically. Wire field is `external_user_id` (never `external_id`).
 
 ## Method reference
 
@@ -69,7 +69,7 @@ Depth B: signature, purpose, parameters, and return type. Examples are clustered
 func configure(_ configuration: ComRaidConfiguration) throws
 ```
 
-Persists App ID / API base / APNs environment, sets up Keychain Subscription storage, and starts ACK flush.
+Persists App ID / API base / APNs environment, sets up Keychain Subscription storage (id, credential, External user ID), restores a logged-in External user ID when present, and starts ACK flush.
 Throws `ComRaidError.invalidConfiguration` when `appId` is blank (does not crash).
 
 | Parameter | Type | Description |
@@ -84,7 +84,7 @@ Throws `ComRaidError.invalidConfiguration` when `appId` is blank (does not crash
 func setAPNsDeviceToken(_ tokenData: Data) async
 ```
 
-Stores the APNs device token from `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`. Also notifies `addTokenRefreshListener` subscribers.
+Stores the APNs device token from `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`. Notifies `addTokenRefreshListener` subscribers. When a Subscription credential already exists, also calls `/token` (same path as `onPushTokenRefresh`).
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -157,7 +157,7 @@ Requests notification permission. When granted, registers for remote notificatio
 func register() async throws
 ```
 
-Fetches the current APNs token and creates a Subscription (`mobileRegisterSubscription`). Requires a prior `setAPNsDeviceToken` (or a token already available to the provider).
+Fetches the current APNs token and creates or refreshes a Subscription (`mobileRegisterSubscription`). Sends a persisted Keychain credential when present so a repeat register keeps the same Subscription and Contact. Requires a prior `setAPNsDeviceToken` (or a token already available to the provider).
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -185,7 +185,7 @@ Token rotation: replaces the Subscription token when a credential exists; otherw
 func login(externalUserId: String, jwt: String? = nil) async throws
 ```
 
-Binds the Subscription to a known Contact. Pass Identity verification **JWT** when the Project requires it.
+Binds the Subscription to a known Contact. Pass Identity verification **JWT** when the Project requires it. Persists the External user ID in the Keychain with the Subscription id and credential so `setAttributes` works after an app restart.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -200,7 +200,7 @@ Binds the Subscription to a known Contact. Pass Identity verification **JWT** wh
 func logout() async throws
 ```
 
-Makes the Subscription Inactive. Keeps the stored credential so Contact-level opt-in/out still works while Inactive.
+Makes the Subscription **Inactive** and clears its server credential. Clears the Keychain Subscription id, credential, and External user ID, then immediately registers a fresh Subscription on a new Anonymous contact. Mobile routes refuse the old row with `401 unauthorized` or `409 subscription_inactive`.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -257,7 +257,7 @@ Upserts Contact Attributes for the logged-in Contact (`PUT /mobile/subscriptions
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `attributes` | `[String: Any]` | Attribute map (empty map is a successful empty update) |
+| `attributes` | `[String: Any]` | Attribute map (empty map is a successful empty update). Pass `NSNull()` for a key to remove that Attribute. |
 
 **Returns:** `Void`
 
