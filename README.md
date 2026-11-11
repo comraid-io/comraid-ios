@@ -24,14 +24,14 @@ pod 'ComRaid', '0.1.0'
 
 ## Getting started
 
-Configure early with a publishable App ID and APNs environment, then run the identity loop:
+Configure early with a publishable App ID, then run the identity loop. The SDK detects the APNs environment itself: `aps-environment` in `embedded.mobileprovision` (`development` → sandbox, `production` → production), the Simulator → sandbox, and no profile (App Store / TestFlight) → production. Set `apnsEnvironment` only to override detection.
 
 ```swift
 try await ComRaid.shared.configure(
   .init(
-    appId: "cr_app_your_id",
-    // apiBaseURL: URL(string: "http://localhost:8080")!, // optional; default https://api.comraid.io
-    apnsEnvironment: .sandbox // or .production
+    appId: "cr_app_your_id"
+    // , apiBaseURL: URL(string: "http://localhost:8080")! // optional; default https://api.comraid.io
+    // , apnsEnvironment: .sandbox // optional override; detected from the provisioning profile by default
   )
 )
 
@@ -74,7 +74,7 @@ Throws `ComRaidError.invalidConfiguration` when `appId` is blank (does not crash
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `configuration` | `ComRaidConfiguration` | `appId` (`cr_app_…`), optional `apiBaseURL` (default `https://api.comraid.io`), required `apnsEnvironment`, optional `storageSuiteName`, optional `displayForegroundNotifications` (default `true`) |
+| `configuration` | `ComRaidConfiguration` | `appId` (`cr_app_…`), optional `apiBaseURL` (default `https://api.comraid.io`), optional `apnsEnvironment` (overrides detection from the provisioning profile; omitted → detected), optional `storageSuiteName`, optional `displayForegroundNotifications` (default `true`) |
 
 **Returns:** `Void`
 
