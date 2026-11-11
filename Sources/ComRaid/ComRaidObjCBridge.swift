@@ -17,7 +17,7 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
   @objc public func configure(
     appId: String,
     apiBaseURL: String?,
-    apnsEnvironment: String,
+    apnsEnvironment: String?,
     storageSuiteName: String?,
     displayForegroundNotifications: Bool,
     completion: @escaping @Sendable (NSError?) -> Void
@@ -25,17 +25,22 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
     let configuredSuite = storageSuiteName?.isEmpty == false
       ? storageSuiteName
       : (Bundle.main.object(forInfoDictionaryKey: "ComRaidStorageSuiteName") as? String)
-    let env: APNsEnvironment
-    switch apnsEnvironment {
-    case "sandbox": env = .sandbox
-    case "production": env = .production
-    default:
-      completion(NSError(
-        domain: "ComRaid",
-        code: 1004,
-        userInfo: [NSLocalizedDescriptionKey: "apnsEnvironment must be sandbox or production"]
-      ))
-      return
+    let env: APNsEnvironment?
+    let trimmed = apnsEnvironment?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    if trimmed.isEmpty {
+      env = nil
+    } else {
+      switch trimmed {
+      case "sandbox": env = .sandbox
+      case "production": env = .production
+      default:
+        completion(NSError(
+          domain: "ComRaid",
+          code: 1004,
+          userInfo: [NSLocalizedDescriptionKey: "apnsEnvironment must be sandbox or production"]
+        ))
+        return
+      }
     }
     let baseURL = apiBaseURL.flatMap { URL(string: $0) } ?? URL(string: "https://api.comraid.io")!
     Task {
@@ -61,7 +66,7 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
   @objc public func configure(
     appId: String,
     apiBaseURL: String?,
-    apnsEnvironment: String,
+    apnsEnvironment: String?,
     storageSuiteName: String?,
     completion: @escaping @Sendable (NSError?) -> Void
   ) {
