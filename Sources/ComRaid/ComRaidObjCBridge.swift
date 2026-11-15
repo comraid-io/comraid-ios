@@ -1,6 +1,12 @@
 import Foundation
 import UserNotifications
 
+/// Immutable UNNotificationRequest crossing a Task boundary (not marked Sendable by Apple).
+private struct SendableUNNotificationRequest: @unchecked Sendable {
+  let request: UNNotificationRequest
+  init(_ request: UNNotificationRequest) { self.request = request }
+}
+
 @objc(ComraidBridge)
 public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
   @objc public static let shared = ComRaidObjCBridge()
@@ -141,15 +147,13 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
     storageSuiteName: String?,
     completion: @escaping @Sendable (UNNotificationContent) -> Void
   ) {
-    // UNNotificationRequest is immutable but not marked Sendable.
-    nonisolated(unsafe) let request = request
+    // UNNotificationRequest is immutable but not Sendable; box it so the Task
+    // closure does not trip Swift 6 region isolation ("accessible to current task").
+    let boxed = SendableUNNotificationRequest(request)
     let suite = storageSuiteName?.trimmingCharacters(in: .whitespacesAndNewlines)
     let resolvedSuite = (suite?.isEmpty == false) ? suite : nil
-    // Capture completion before Task so the @Sendable closure is not crossing isolation
-    // as a "sending" parameter of an escaping Task body (Swift 6).
-    let finish = completion
     Task {
-      finish(await RemoteNotificationDisplay.enrich(request, storageSuiteName: resolvedSuite))
+      completion(await RemoteNotificationDisplay.enrich(boxed.request, storageSuiteName: resolvedSuite))
     }
   }
 
