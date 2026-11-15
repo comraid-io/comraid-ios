@@ -10,7 +10,9 @@ public struct ComRaidConfiguration: Sendable, Equatable {
   public var appId: String
   /// API base URL. Defaults to the hosted ComRaid API.
   public var apiBaseURL: URL
-  /// Required for APNs Subscription register / token replace.
+  /// APNs host for Subscription register / token replace.
+  /// When omitted at init, the SDK detects sandbox vs production from the
+  /// provisioning profile (simulator → sandbox; App Store / TestFlight → production).
   public var apnsEnvironment: APNsEnvironment
   public var storageSuiteName: String?
   /**
@@ -23,13 +25,13 @@ public struct ComRaidConfiguration: Sendable, Equatable {
   public init(
     appId: String,
     apiBaseURL: URL = URL(string: "https://api.comraid.io")!,
-    apnsEnvironment: APNsEnvironment,
+    apnsEnvironment: APNsEnvironment? = nil,
     storageSuiteName: String? = nil,
     displayForegroundNotifications: Bool = true
   ) {
     self.appId = appId
     self.apiBaseURL = apiBaseURL
-    self.apnsEnvironment = apnsEnvironment
+    self.apnsEnvironment = apnsEnvironment ?? APNsEnvironmentDetector.detect()
     self.storageSuiteName = storageSuiteName
     self.displayForegroundNotifications = displayForegroundNotifications
   }

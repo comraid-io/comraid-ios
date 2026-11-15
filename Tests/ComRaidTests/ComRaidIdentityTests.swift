@@ -144,6 +144,34 @@ import Testing
   #expect(harness.store.credential == "cred-new")
 }
 
+@Test func registerSendsDetectedApnsEnvironmentWhenConfigOmitsIt() async throws {
+  // Tests run on the iOS Simulator, where detection resolves to sandbox.
+  let harness = try await IdentityHarness.make(token: "apns-token-1", apnsEnvironment: nil)
+  harness.transport.nextResponse = HttpResponse(
+    statusCode: 201,
+    body: Data(#"{"subscription_id":"sub-new","subscription_credential":"cred-new","channel":"push","anonymous":true,"platform":"ios","provider":"apns"}"#.utf8)
+  )
+
+  try await harness.comraid.register()
+
+  let body = try JSONSerialization.jsonObject(with: #require(harness.transport.requests.first?.body)) as! [String: Any]
+  #expect(body["apns_environment"] as? String == "sandbox")
+}
+
+@Test func registerSendsOverriddenApnsEnvironmentOverDetection() async throws {
+  // Detection on the Simulator would say sandbox; the explicit setting wins.
+  let harness = try await IdentityHarness.make(token: "apns-token-1", apnsEnvironment: .production)
+  harness.transport.nextResponse = HttpResponse(
+    statusCode: 201,
+    body: Data(#"{"subscription_id":"sub-new","subscription_credential":"cred-new","channel":"push","anonymous":true,"platform":"ios","provider":"apns"}"#.utf8)
+  )
+
+  try await harness.comraid.register()
+
+  let body = try JSONSerialization.jsonObject(with: #require(harness.transport.requests.first?.body)) as! [String: Any]
+  #expect(body["apns_environment"] as? String == "production")
+}
+
 @Test func registerSendsStoredCredentialOnRepeat() async throws {
   let harness = try await IdentityHarness.make(token: "apns-token-1")
   harness.store.save(subscriptionId: "sub-1", credential: "cred-1")
@@ -258,13 +286,16 @@ private struct IdentityHarness {
   let transport: RecordingTransport
   let store: InMemorySubscriptionStore
 
-  static func make(token: String = "token") async throws -> IdentityHarness {
+  static func make(
+    token: String = "token",
+    apnsEnvironment: APNsEnvironment? = .sandbox
+  ) async throws -> IdentityHarness {
     let comraid = ComRaid()
     let transport = RecordingTransport()
     let store = InMemorySubscriptionStore()
     let tokens = FakeTokenProvider(token: token)
     try await comraid.configureForTests(
-      .init(appId: "cr_app_test", apnsEnvironment: .sandbox),
+      .init(appId: "cr_app_test", apnsEnvironment: apnsEnvironment),
       transport: transport,
       tokenProvider: tokens,
       subscriptionStore: store

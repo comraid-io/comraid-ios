@@ -186,7 +186,7 @@ private struct PropertiesHarness {
       language: "en",
       country: "US"
     )
-    await comraid.configureForTests(
+    try await comraid.configureForTests(
       .init(appId: "cr_app_test", apnsEnvironment: .sandbox),
       transport: transport,
       tokenProvider: tokens,
