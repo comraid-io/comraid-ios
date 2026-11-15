@@ -27,7 +27,8 @@ struct PushDisplay: Equatable, Sendable {
 
 enum PushPayload {
   /// Reserved `cr_*` keys — stripped from the RN/event `data` map so sender keys stay unchanged.
-  private static let reservedKeys: Set<String> = [
+  /// Hand-written; equality against the vendored contract is asserted in tests (no codegen).
+  static let reservedKeys: Set<String> = [
     "cr_delivery_id",
     "cr_attribution_token",
     "cr_message_id",
