@@ -1,8 +1,5 @@
 import Darwin
 import Foundation
-#if canImport(UIKit)
-import UIKit
-#endif
 
 typealias DeviceInfoProvider = @Sendable () -> DeviceProperties
 
@@ -21,8 +18,11 @@ enum SystemDeviceInfo {
     let localeTag = locale.identifier.replacingOccurrences(of: "_", with: "-")
     #if canImport(UIKit) && !os(watchOS)
     let model: String? = deviceModelIdentifier()
-    let osVersion: String? = UIDevice.current.systemVersion
-    let osName = UIDevice.current.systemName
+    // UIDevice is MainActor-isolated in the iOS 18+ SDK; ProcessInfo avoids hopping
+    // from this @Sendable collector (called from the ComRaid actor).
+    let version = ProcessInfo.processInfo.operatingSystemVersion
+    let osVersion: String? = "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)"
+    let osName = "iOS"
     #else
     let model: String? = nil
     let osVersion: String? = nil

@@ -145,8 +145,11 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
     nonisolated(unsafe) let request = request
     let suite = storageSuiteName?.trimmingCharacters(in: .whitespacesAndNewlines)
     let resolvedSuite = (suite?.isEmpty == false) ? suite : nil
+    // Capture completion before Task so the @Sendable closure is not crossing isolation
+    // as a "sending" parameter of an escaping Task body (Swift 6).
+    let finish = completion
     Task {
-      completion(await RemoteNotificationDisplay.enrich(request, storageSuiteName: resolvedSuite))
+      finish(await RemoteNotificationDisplay.enrich(request, storageSuiteName: resolvedSuite))
     }
   }
 

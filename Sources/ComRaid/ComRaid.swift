@@ -306,7 +306,18 @@ public actor ComRaid {
   @discardableResult
   public func requestPermission(options: UNAuthorizationOptions = [.alert, .badge, .sound]) async throws -> Bool {
     _ = try requireConfigured()
-    let granted = try await notificationCenter.requestAuthorization(options: options)
+    // Completion-handler API keeps UNUserNotificationCenter on this actor; the async
+    // overload is nonisolated and trips Swift 6 "sending" checks.
+    let granted = try await withCheckedThrowingContinuation {
+      (continuation: CheckedContinuation<Bool, Error>) in
+      notificationCenter.requestAuthorization(options: options) { granted, error in
+        if let error {
+          continuation.resume(throwing: error)
+        } else {
+          continuation.resume(returning: granted)
+        }
+      }
+    }
     if granted {
       #if canImport(UIKit) && !os(watchOS)
       await MainActor.run {
