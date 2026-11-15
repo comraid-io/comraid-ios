@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Refresh the vendored Push payload contract from a sibling planning checkout (ADR 0017).
+# Usage:
+#   scripts/sync-push-payload-contract           # copy planning → contracts/push-payload
+#   scripts/sync-push-payload-contract --check   # fail if committed copy differs
+#
+# Source: COMRAID_PLANNING_ROOT/contracts/push-payload, or ../planning/contracts/push-payload
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+DEST="$ROOT/contracts/push-payload"
+
+if [[ -n "${COMRAID_PLANNING_ROOT:-}" ]]; then
+  SRC="${COMRAID_PLANNING_ROOT%/}/contracts/push-payload"
+else
+  SRC="$ROOT/../planning/contracts/push-payload"
+fi
+
+if [[ ! -d "$SRC" ]]; then
+  echo "sync-push-payload-contract: source not found at $SRC" >&2
+  echo "Clone planning as a sibling, or set COMRAID_PLANNING_ROOT." >&2
+  exit 1
+fi
+
+if [[ ! -f "$SRC/contract.json" ]] || [[ ! -d "$SRC/goldens" ]]; then
+  echo "sync-push-payload-contract: $SRC is missing contract.json or goldens/" >&2
+  exit 1
+fi
+
+CHECK=0
+if [[ "${1:-}" == "--check" ]]; then
+  CHECK=1
+elif [[ "${1:-}" != "" ]]; then
+  echo "Usage: $0 [--check]" >&2
+  exit 2
+fi
+
+if [[ "$CHECK" -eq 1 ]]; then
+  if [[ ! -d "$DEST" ]]; then
+    echo "sync-push-payload-contract: committed copy missing at $DEST" >&2
+    exit 1
+  fi
+  if ! diff -ru "$SRC" "$DEST" >/dev/null; then
+    echo "sync-push-payload-contract: committed copy drifts from $SRC" >&2
+    diff -ru "$SRC" "$DEST" >&2 || true
+    exit 1
+  fi
+  echo "sync-push-payload-contract: up to date with $SRC"
+  exit 0
+fi
+
+rm -rf "$DEST"
+mkdir -p "$DEST"
+# Byte-for-byte tree copy (contract.json, goldens/, README.md, …).
+cp -a "$SRC"/. "$DEST"/
+echo "sync-push-payload-contract: synced $SRC → $DEST"
