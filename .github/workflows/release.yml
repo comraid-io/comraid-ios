@@ -1,0 +1,43 @@
+# Draft for v1-tracker #35 — requires COCOAPODS_TRUNK_TOKEN and enabled Actions.
+# Tags must match ComRaid.podspec version with no `v` prefix (e.g. 0.1.0).
+name: Release
+
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+
+jobs:
+  trunk:
+    name: CocoaPods trunk push
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      - name: Verify tag matches podspec version
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="$(sed -n 's/.*spec\.version = "\([^"]*\)".*/\1/p' ComRaid.podspec | head -1)"
+          if [ -z "$version" ] || [ "$tag" != "$version" ]; then
+            echo "Tag '$tag' must equal ComRaid.podspec version '$version' (no v prefix)" >&2
+            exit 1
+          fi
+
+      - name: pod lib lint
+        run: pod lib lint ComRaid.podspec --allow-warnings
+
+      - name: pod trunk push
+        env:
+          COCOAPODS_TRUNK_TOKEN: ${{ secrets.COCOAPODS_TRUNK_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${COCOAPODS_TRUNK_TOKEN:-}" ]; then
+            echo "COCOAPODS_TRUNK_TOKEN is not set; cannot push to trunk." >&2
+            exit 1
+          fi
+          pod trunk push ComRaid.podspec --allow-warnings

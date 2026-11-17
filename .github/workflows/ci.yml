@@ -1,0 +1,43 @@
+# Draft for v1-tracker #35 — enable Actions / branch protection before relying on this.
+name: CI
+
+on:
+  push:
+    branches: [draft, main]
+  pull_request:
+    branches: [draft, main]
+  workflow_dispatch:
+
+jobs:
+  ios:
+    name: iOS · lint + test
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      - name: Resolve iPhone simulator destination
+        id: dest
+        run: |
+          set -euo pipefail
+          line="$(xcrun simctl list devices available | awk -F '[()]' '/iPhone/{print $1"|"$2; exit}')"
+          name="$(echo "$line" | cut -d'|' -f1 | sed 's/[[:space:]]*$//;s/^[[:space:]]*//')"
+          udid="$(echo "$line" | cut -d'|' -f2 | tr -d ' ')"
+          if [ -z "$name" ] || [ -z "$udid" ]; then
+            echo "No available iPhone simulator" >&2
+            exit 1
+          fi
+          echo "destination=platform=iOS Simulator,id=$udid" >> "$GITHUB_OUTPUT"
+          echo "Using $name ($udid)"
+
+      - name: SwiftPM build + test (iOS)
+        run: |
+          xcodebuild \
+            -scheme ComRaid \
+            -destination '${{ steps.dest.outputs.destination }}' \
+            build test
+
+      - name: CocoaPods lib lint
+        run: pod lib lint ComRaid.podspec --allow-warnings
