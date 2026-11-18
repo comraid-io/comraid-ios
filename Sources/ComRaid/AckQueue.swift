@@ -3,6 +3,8 @@ import Foundation
 enum AckKind: String, Sendable, Equatable {
   case delivered
   case opened
+  /// In-app messages only: the user dismissed the message.
+  case dismissed
 
   static func fromWire(_ value: String) -> AckKind? {
     AckKind(rawValue: value)

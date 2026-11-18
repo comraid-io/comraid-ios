@@ -614,6 +614,126 @@ final class NotificationService: UNNotificationServiceExtension {
 
 `ComRaid` is extension-safe: `requestPermission`, `requestAuthorization` and the bridge's `requestNotificationPermission` are unavailable in app extensions, and nothing else in the module needs `UIApplication`. Images are downloaded over http(s) with a 10 s timeout and a 5 MB cap (JPEG, PNG, GIF, HEIC); on failure the original content is shown. ObjC hosts can call `ComraidBridge.shared.enrichNotificationRequest(_:storageSuiteName:completion:)`.
 
+### In-app messages
+
+In-app messages are shown inside your app: a modal, a banner at the top or bottom, or a full-screen layout, with up to two buttons. They need no notification permission. The SDK fetches eligible messages each time the app comes to the foreground from the background (and at launch), shows at most one per foreground once a window is available, and reports impressions, clicks and dismissals for you. Each Contact sees a message once. You can opt a Contact out separately from push.
+
+You route deep links yourself: when a button is tapped the SDK reports the click and closes the message, and your listener receives the button (including its `deepLink`). The SDK never opens a link. To draw the message yourself, set a presenter. The default layouts need a UIKit window scene; apps without scenes can use a presenter.
+
+```swift
+final class Router: InAppMessageListener {
+  func didClick(_ message: InAppMessage, button: InAppButton) {
+    if let link = button.deepLink { open(link) }
+  }
+}
+let token = await ComRaid.shared.addInAppMessageListener(router)
+```
+
+#### `setInAppMessagePresenter(_:)`
+
+```swift
+func setInAppMessagePresenter(_ presenter: InAppMessagePresenter?) async
+// typealias InAppMessagePresenter = @MainActor @Sendable (InAppMessage, any InAppMessageHandle, [String: String]) -> Void
+```
+
+Draw In-app messages yourself. While a presenter is set the SDK draws nothing: it calls your closure with the message, a handle and the current triggers, and you report what happened through the handle. Pass `nil` to return to the SDK layouts. May be called before `configure`.
+
+| Handle method | Meaning |
+|---------------|---------|
+| `impression()` | The message is on screen. Recorded once. |
+| `clicked(buttonId:)` | The user tapped that button. Unknown ids are ignored. |
+| `dismissed()` | The user closed it. Recorded once. If a button was tapped first, the click is the outcome: listeners still see the message close, but no dismissal is recorded. |
+
+A Dashboard Test send reaches the presenter too (`message.isTest`); the handle makes no ACKs for it.
+
+#### `addInAppMessageListener(_:)`
+
+```swift
+func addInAppMessageListener(_ listener: any InAppMessageListener) async -> ComRaidListenerToken
+```
+
+Observe `willDisplay`, `didDisplay`, `willDismiss`, `didDismiss` and `didClick(_:button:)`. A listener only observes: it cannot change or suppress a message. Every method has a no-op default. The SDK keeps a strong reference until you remove it.
+
+#### `removeInAppMessageListener(_:)`
+
+```swift
+func removeInAppMessageListener(_ token: ComRaidListenerToken) async
+```
+
+Stop observing.
+
+#### `addTrigger(key:value:)`
+
+```swift
+func addTrigger(key: String, value: String) async
+```
+
+Set a local trigger. Triggers stay on the device and are passed to your presenter. They do not yet decide which message is shown: ComRaid messages carry no trigger rules.
+
+#### `addTriggers(_:)`
+
+```swift
+func addTriggers(_ triggers: [String: String]) async
+```
+
+Set several triggers at once.
+
+#### `removeTrigger(key:)`
+
+```swift
+func removeTrigger(key: String) async
+```
+
+Remove one trigger.
+
+#### `clearTriggers()`
+
+```swift
+func clearTriggers() async
+```
+
+Remove all triggers.
+
+#### `getTriggers()`
+
+```swift
+func getTriggers() -> [String: String]
+```
+
+The triggers currently set.
+
+#### `setInAppMessagesPaused(_:)`
+
+```swift
+func setInAppMessagesPaused(_ paused: Bool) async
+```
+
+Pause or resume showing In-app messages on this device. A message waits while paused and shows after you resume.
+
+#### `isInAppMessagesPaused()`
+
+```swift
+func isInAppMessagesPaused() -> Bool
+```
+
+Whether showing is paused.
+
+#### `optOutInApp()`
+
+```swift
+func optOutInApp() async throws
+```
+
+Opt this Contact out of In-app messages. This is the `in_app` channel and is independent of push `optOut()`. Cached messages stop showing at once.
+
+#### `optInInApp()`
+
+```swift
+func optInInApp() async throws
+```
+
+Opt this Contact back in.
+
 ### Models
 
 | Type | Role |
@@ -628,6 +748,10 @@ final class NotificationService: UNNotificationServiceExtension {
 | `ComRaidScheduleRequest` | Local schedule (`notification` + `triggerDate`) |
 | `ComRaidCapabilities` / `ComRaidAuthorizationStatus` | Permission snapshot from `capabilities()` |
 | `ComRaidTimer` | Timer state (`running` / `paused` / `cancelled` / `completed`) |
+| `InAppMessage` | An In-app message: `id`, `layout`, `title`, `body`, `imageURL`, `buttons`, display window (`startAt`, `endAt`) and `isTest` |
+| `InAppButton` | `id`, `label` and optional `deepLink` (your app routes it) |
+| `InAppLayout` | `.modal`, `.bannerTop`, `.bannerBottom`, `.fullscreen` |
+| `InAppMessageHandle` / `InAppMessagePresenter` / `InAppMessageListener` | Report outcomes, draw messages yourself, observe messages |
 
 ## Errors
 
