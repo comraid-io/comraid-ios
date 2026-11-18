@@ -716,6 +716,28 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
     }
   }
 
+  /// Live activities the SDK is tracking, as `[{id, type}]` (React Native `listActivities`).
+  @objc public func listActivities(
+    completion: @escaping @Sendable (NSArray?, NSError?) -> Void
+  ) {
+    Task {
+      let items = await ComRaid.shared.trackedActivities().map {
+        ["id": $0.id, "type": $0.type] as NSDictionary
+      }
+      completion(items as NSArray, nil)
+    }
+  }
+
+  /// End a tracked Live activity (React Native `endActivity`). False for an unknown id.
+  @objc public func endActivity(
+    id: String,
+    completion: @escaping @Sendable (Bool, NSError?) -> Void
+  ) {
+    Task {
+      completion(await ComRaid.shared.endActivity(id: id), nil)
+    }
+  }
+
   @objc public func flushAcks(completion: @escaping @Sendable (NSError?) -> Void) {
     Task {
       await ComRaid.shared.flushAcks()

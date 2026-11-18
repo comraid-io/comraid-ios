@@ -423,6 +423,63 @@ Flushes any durable ACK backlog.
 
 **Returns:** `Void`
 
+### Live activities
+
+Live activities put one thing on the lock screen and in the Dynamic Island that changes for hours: a delivery, a ride, a score. Your app defines the Live Activity (its `ActivityAttributes` and Widget Extension) and starts it with Apple's API. ComRaid keeps your backend able to update it: the SDK sends Apple's per-activity update token to ComRaid, and your server then updates or ends the activity through the ComRaid API (`POST /activities/{activity_id}/updates`).
+
+Requirements: iOS 16.2 or later (the SDK still supports iOS 15; these methods are gated with `@available(iOS 16.2, *)`), `NSSupportsLiveActivities` set to `YES` in your app's `Info.plist`, a Widget Extension that draws the activity, and the activity started with `pushType: .token`. The Contact must be logged in: ComRaid refuses activity tokens from anonymous Subscriptions, so the SDK waits and sends the token once they are.
+
+```swift
+let activity = try Activity.request(
+  attributes: DeliveryAttributes(orderId: "order_8392"),
+  content: .init(state: .init(status: "preparing"), staleDate: nil),
+  pushType: .token
+)
+await ComRaid.shared.trackActivity(activity, id: "order_8392", type: "delivery")
+```
+
+#### `trackActivity(_:id:type:)`
+
+```swift
+@available(iOS 16.2, *)
+func trackActivity<Attributes: ActivityAttributes>(_ activity: Activity<Attributes>, id: String, type: String) async
+```
+
+Tell ComRaid about a Live activity you just started. `id` is your own activity id, the same one you use in the ComRaid API; use letters, digits and `. _ : -` (up to 128 characters). `type` names the kind of activity, for example `"delivery"`. The SDK sends the update token and every rotation (the newest token wins), retries network errors a few times, and reports when the activity ends or the user dismisses it. Tracking the same id again replaces the earlier tracking.
+
+#### `trackRunningActivities(of:type:id:)`
+
+```swift
+@available(iOS 16.2, *)
+func trackRunningActivities<Attributes: ActivityAttributes>(
+  of attributes: Attributes.Type, type: String, id: @Sendable (Activity<Attributes>) -> String
+) async
+```
+
+Re-attach to the activities still running when your app launches. Activities outlive your process, and the SDK cannot list `Activity<Attributes>` for types it does not know, so call this once at launch for each of your attribute types:
+
+```swift
+await ComRaid.shared.trackRunningActivities(of: DeliveryAttributes.self, type: "delivery") {
+  $0.attributes.orderId
+}
+```
+
+#### `endActivity(id:)`
+
+```swift
+func endActivity(id: String) async -> Bool
+```
+
+End a tracked Live activity now and remove it from the lock screen. Returns `false` for an id that is not tracked. ComRaid is told it ended.
+
+#### `trackedActivities()`
+
+```swift
+func trackedActivities() async -> [ComRaidTrackedActivity]
+```
+
+The activities the SDK is tracking in this process, as `ComRaidTrackedActivity(id:type:)`, sorted by id.
+
 ### Local schedules
 
 ```swift
@@ -648,7 +705,7 @@ Public `ComRaidError` cases:
 
 ## Objective-C bridge
 
-`ComRaidObjCBridge` (`@objc(ComraidBridge)`) exposes the mobile host surface for React Native / ObjC: configure (including `displayForegroundNotifications`), APNs token, `onPushTokenRefresh`, permission (default or explicit option strings), register, login/logout, opt-in/out, capabilities, schedule/cancel/pendingSchedules, `startTimer` / `pauseTimer` / `resumeTimer` / `cancelTimer` / `timers`, `setDeviceProperties`, Attributes, ACK helpers, `getToken`, `getInitialNotification`, `presentNotification`, `enrichNotificationRequest` (Notification Service Extension), receive event emitter, and remote handle/presentation helpers.
+`ComRaidObjCBridge` (`@objc(ComraidBridge)`) exposes the mobile host surface for React Native / ObjC: configure (including `displayForegroundNotifications`), APNs token, `onPushTokenRefresh`, permission (default or explicit option strings), register, login/logout, opt-in/out, capabilities, schedule/cancel/pendingSchedules, `startTimer` / `pauseTimer` / `resumeTimer` / `cancelTimer` / `timers`, `setDeviceProperties`, Attributes, ACK helpers, `listActivities` / `endActivity` (Live activities), `getToken`, `getInitialNotification`, `presentNotification`, `enrichNotificationRequest` (Notification Service Extension), receive event emitter, and remote handle/presentation helpers.
 
 Direct `RemoteNotificationDisplay` builders stay Swift-only. Prefer the Swift `ComRaid` actor when possible.
 
