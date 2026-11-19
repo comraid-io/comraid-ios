@@ -208,7 +208,12 @@ private final class PropertiesRecordingTransport: HttpTransport, @unchecked Send
   }
 
   func execute(_ request: HttpRequest) async throws -> HttpResponse {
-    lock.withLock {
+    // Every foreground also fetches In-app messages. These tests are about register and session
+    // requests, so answer that fetch separately and keep it out of `requests`.
+    if request.method == "GET", request.path.hasSuffix("/in-app-messages") {
+      return HttpResponse(statusCode: 200, body: Data(#"{"messages":[]}"#.utf8))
+    }
+    return lock.withLock {
       requests.append(request)
       guard let nextResponse else { fatalError("No response configured") }
       return nextResponse

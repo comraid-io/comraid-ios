@@ -149,6 +149,25 @@ struct MobileApiClient: Sendable {
     }
   }
 
+  /// In-app messages this install may show now (GET /mobile/subscriptions/{id}/in-app-messages).
+  /// The server decides eligibility (Segment, window, opt-out, already seen). The Subscription
+  /// credential travels in a header because this is a GET.
+  func listInAppMessages(subscriptionId: String, credential: String) async throws -> [FetchedInAppMessage] {
+    let response = try await transport.execute(
+      HttpRequest(
+        method: "GET",
+        path: "/mobile/subscriptions/\(subscriptionId)/in-app-messages",
+        headers: [
+          "X-ComRaid-App-Id": appId,
+          "X-ComRaid-Subscription-Credential": credential,
+        ],
+        body: nil
+      )
+    )
+    try requireSuccess(response, expected: [200])
+    return parseInAppMessages(try jsonObject(response.body)["messages"])
+  }
+
   private func post(path: String, payload: [String: Any]) async throws -> HttpResponse {
     try await execute(method: "POST", path: path, payload: payload)
   }
