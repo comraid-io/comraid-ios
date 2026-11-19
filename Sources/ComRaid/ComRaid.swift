@@ -14,6 +14,8 @@ public actor ComRaid {
   private var tokenProvider: (any TokenProvider)?
   private var apnsTokenProvider: StoredAPNsTokenProvider?
   private var ackQueue: AckQueue?
+  /// Tracks Live activities the host app started (see `trackActivity`).
+  var activityTracker: ActivityTracker?
   private var deviceProperties: DeviceProperties?
   private var externalUserId: String?
   private var deviceInfoProvider: DeviceInfoProvider = { SystemDeviceInfo.collect() }
@@ -85,6 +87,7 @@ public actor ComRaid {
       transport: transport
     )
     ackQueue = queue
+    replaceActivityTracker(api: api!, retryDelays: ActivityTracker.defaultRetryDelays)
     deviceProperties = nil
     externalUserId = credentials.externalUserId
     pendingRegisterAfterToken = false
@@ -121,7 +124,8 @@ public actor ComRaid {
     deviceInfoProvider: @escaping DeviceInfoProvider = { DeviceProperties() },
     clock: @escaping @Sendable () -> TimeInterval = { Date().timeIntervalSince1970 },
     scheduleClock: (@Sendable () -> Date)? = nil,
-    inAppDisplay: (any InAppDisplay)? = nil
+    inAppDisplay: (any InAppDisplay)? = nil,
+    activityRetryDelays: [TimeInterval] = []
   ) throws {
     let trimmedAppId = configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedAppId.isEmpty else {
@@ -143,6 +147,7 @@ public actor ComRaid {
       transport: transport
     )
     self.localNotificationScheduler = localNotificationScheduler
+    replaceActivityTracker(api: api!, retryDelays: activityRetryDelays)
     if let scheduleClock { self.clock = scheduleClock }
     deviceProperties = nil
     externalUserId = subscriptionStore.externalUserId
@@ -174,6 +179,8 @@ public actor ComRaid {
     tokenProvider = nil
     apnsTokenProvider = nil
     ackQueue = nil
+    if let old = activityTracker { Task { await old.cancelAll() } }
+    activityTracker = nil
     localNotificationScheduler = nil
     clock = { Date() }
     deviceProperties = nil
@@ -421,6 +428,7 @@ public actor ComRaid {
     // A fresh install has no Subscription at launch, so its foreground fetch could not run: do it now.
     needsInAppForegroundFetch = false
     startInAppFetch()
+    await activityTracker?.scheduleFlush()
   }
 
   /// Token rotation: replace-token when credential exists, else full register.
@@ -470,6 +478,7 @@ public actor ComRaid {
       await inApp?.reset()
       startInAppFetch()
     }
+    await activityTracker?.scheduleFlush()
   }
 
   public func logout() async throws {
@@ -926,6 +935,17 @@ public actor ComRaid {
     return subscriptionStore
   }
 
+  /// The Subscription to report under, or nil while the SDK is not registered or the Contact is not
+  /// logged in: the server refuses activity tokens from anonymous Subscriptions.
+  func activityReadiness() -> ActivityReadiness? {
+    guard let store = subscriptionStore,
+          let subscriptionId = store.subscriptionId, !subscriptionId.isEmpty,
+          let credential = store.credential, !credential.isEmpty,
+          let externalUserId, !externalUserId.isEmpty
+    else { return nil }
+    return ActivityReadiness(subscriptionId: subscriptionId, credential: credential)
+  }
+
   private func requireSubscription() throws -> (String, String) {
     let store = try requireSubscriptionStore()
     guard let subscriptionId = store.subscriptionId, !subscriptionId.isEmpty,
@@ -983,6 +1003,7 @@ public actor ComRaid {
   }
 
   private func onAppForeground() async {
+    await activityTracker?.scheduleFlush()
     // In-app messages are fetched on every real foreground, independent of the session debounce below,
     // and in their own task so a slow network never delays recording the session.
     if needsInAppForegroundFetch {
