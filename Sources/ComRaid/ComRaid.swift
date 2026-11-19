@@ -14,6 +14,8 @@ public actor ComRaid {
   private var tokenProvider: (any TokenProvider)?
   private var apnsTokenProvider: StoredAPNsTokenProvider?
   private var ackQueue: AckQueue?
+  /// Tracks Live activities the host app started (see `trackActivity`).
+  var activityTracker: ActivityTracker?
   private var deviceProperties: DeviceProperties?
   private var externalUserId: String?
   private var deviceInfoProvider: DeviceInfoProvider = { SystemDeviceInfo.collect() }
@@ -30,6 +32,18 @@ public actor ComRaid {
   private var foregroundFlushObserver: NSObjectProtocol?
   /// Set when `register` times out waiting for APNs; cleared on success or late auto-register.
   private var pendingRegisterAfterToken = false
+  /// In-app messages. The registrations below live here, not on the manager, so they apply even when
+  /// the host sets a presenter, listener or trigger before `configure`, and survive re-configuring.
+  private var inApp: InAppMessageManager?
+  private var inAppPresenter: InAppMessagePresenter?
+  private var inAppPaused = false
+  private var inAppListeners: [ComRaidListenerToken: any InAppMessageListener] = [:]
+  private var inAppTriggers: [String: String] = [:]
+  /// True until the first foreground after launch or after the app went to the background, so a
+  /// brief active/inactive blip (a system alert) does not refetch.
+  private var needsInAppForegroundFetch = true
+  /// The latest In-app fetch, run apart from the session recording so a slow network never delays it.
+  private var inAppFetchTask: Task<Void, Never>?
 
   public init(notificationCenter: UNUserNotificationCenter? = nil) {
     self.injectedNotificationCenter = notificationCenter
@@ -73,11 +87,25 @@ public actor ComRaid {
       transport: transport
     )
     ackQueue = queue
+    replaceActivityTracker(api: api!, retryDelays: ActivityTracker.defaultRetryDelays)
     deviceProperties = nil
     externalUserId = credentials.externalUserId
     pendingRegisterAfterToken = false
     deviceInfoProvider = { SystemDeviceInfo.collect() }
     sessionTracker = SessionTracker()
+    needsInAppForegroundFetch = true
+    #if canImport(UIKit)
+    inApp = makeInAppManager(
+      api: api!,
+      store: credentials,
+      queue: queue,
+      stateStore: UserDefaultsAckQueueStore(suiteName: configuration.storageSuiteName),
+      stateKey: inAppStateKey(apiBaseURL: configuration.apiBaseURL, appId: trimmedAppId),
+      clock: { Date() },
+      display: UIKitInAppDisplay(),
+      flush: { await queue.flush() }
+    )
+    #endif
     SdkConfigStore(suiteName: configuration.storageSuiteName).save(configuration)
     installForegroundFlushObserver()
     installLifecycleObserversIfNeeded()
@@ -95,7 +123,9 @@ public actor ComRaid {
     localNotificationScheduler: (any LocalNotificationScheduling)? = nil,
     deviceInfoProvider: @escaping DeviceInfoProvider = { DeviceProperties() },
     clock: @escaping @Sendable () -> TimeInterval = { Date().timeIntervalSince1970 },
-    scheduleClock: (@Sendable () -> Date)? = nil
+    scheduleClock: (@Sendable () -> Date)? = nil,
+    inAppDisplay: (any InAppDisplay)? = nil,
+    activityRetryDelays: [TimeInterval] = []
   ) throws {
     let trimmedAppId = configuration.appId.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedAppId.isEmpty else {
@@ -117,12 +147,27 @@ public actor ComRaid {
       transport: transport
     )
     self.localNotificationScheduler = localNotificationScheduler
+    replaceActivityTracker(api: api!, retryDelays: activityRetryDelays)
     if let scheduleClock { self.clock = scheduleClock }
     deviceProperties = nil
     externalUserId = subscriptionStore.externalUserId
     pendingRegisterAfterToken = false
     self.deviceInfoProvider = deviceInfoProvider
     sessionTracker = SessionTracker(clock: clock)
+    needsInAppForegroundFetch = true
+    if let queue = ackQueue, let apiClient = api {
+      // Tests run with a fake display (or none), keep In-app state in memory, and flush ACKs explicitly.
+      inApp = makeInAppManager(
+        api: apiClient,
+        store: subscriptionStore,
+        queue: queue,
+        stateStore: InMemoryAckQueueStoreForTests(),
+        stateKey: inAppStateKey(apiBaseURL: configuration.apiBaseURL, appId: trimmedAppId),
+        clock: { Date() },
+        display: inAppDisplay ?? NoWindowInAppDisplay(),
+        flush: {}
+      )
+    }
   }
 
   func resetForTests() {
@@ -134,6 +179,8 @@ public actor ComRaid {
     tokenProvider = nil
     apnsTokenProvider = nil
     ackQueue = nil
+    if let old = activityTracker { Task { await old.cancelAll() } }
+    activityTracker = nil
     localNotificationScheduler = nil
     clock = { Date() }
     deviceProperties = nil
@@ -142,6 +189,13 @@ public actor ComRaid {
     deviceInfoProvider = { SystemDeviceInfo.collect() }
     sessionTracker = SessionTracker()
     lifecycleObserversInstalled = false
+    inApp = nil
+    inAppFetchTask = nil
+    inAppPresenter = nil
+    inAppPaused = false
+    inAppListeners = [:]
+    inAppTriggers = [:]
+    needsInAppForegroundFetch = true
     RemoteReceiveHub.shared.resetForTests()
   }
 
@@ -174,11 +228,22 @@ public actor ComRaid {
   /// Test seam: simulate process foreground without UIKit notifications.
   func handleAppForegroundForTests() async {
     await onAppForeground()
+    await inAppFetchTask?.value
+  }
+
+  /// Test seam: like `handleAppForegroundForTests`, but returns without waiting for the In-app fetch.
+  func handleAppForegroundWithoutSettlingForTests() async {
+    await onAppForeground()
+  }
+
+  /// Test seam: wait for the In-app fetch started by the last foreground, login, register or opt-in.
+  func settleInAppForTests() async {
+    await inAppFetchTask?.value
   }
 
   /// Test seam: simulate process background without UIKit notifications.
   func handleAppBackgroundForTests() {
-    sessionTracker.onBackground()
+    handleDidEnterBackground()
   }
 
   /// Forward the APNs device token from `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`.
@@ -360,6 +425,10 @@ public actor ComRaid {
     )
     store.save(subscriptionId: result.subscriptionId, credential: result.credential)
     sessionTracker.markSessionRecorded()
+    // A fresh install has no Subscription at launch, so its foreground fetch could not run: do it now.
+    needsInAppForegroundFetch = false
+    startInAppFetch()
+    await activityTracker?.scheduleFlush()
   }
 
   /// Token rotation: replace-token when credential exists, else full register.
@@ -382,6 +451,8 @@ public actor ComRaid {
         subscriptionCredential: nil
       )
       store.save(subscriptionId: result.subscriptionId, credential: result.credential)
+      needsInAppForegroundFetch = false
+      startInAppFetch()
       sessionTracker.markSessionRecorded()
     }
   }
@@ -392,6 +463,7 @@ public actor ComRaid {
     let (subscriptionId, credential) = try requireSubscription()
     let trimmed = externalUserId.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { throw ComRaidError.invalidIdentifier }
+    let previousExternalUserId = self.externalUserId
     try await api.login(
       subscriptionId: subscriptionId,
       credential: credential,
@@ -400,6 +472,13 @@ public actor ComRaid {
     )
     store.setExternalUserId(trimmed)
     self.externalUserId = trimmed
+    // The Contact may change (an anonymous one merging into a known one): let the server decide again.
+    // Logging in again as the same user changes nothing, so what was shown stays recorded.
+    if previousExternalUserId != trimmed {
+      await inApp?.reset()
+      startInAppFetch()
+    }
+    await activityTracker?.scheduleFlush()
   }
 
   public func logout() async throws {
@@ -409,6 +488,8 @@ public actor ComRaid {
     try await api.logout(subscriptionId: subscriptionId, credential: credential)
     store.clear()
     externalUserId = nil
+    // The next user must not see, or acknowledge, the previous user's messages.
+    await inApp?.reset()
     try await register()
   }
 
@@ -582,6 +663,111 @@ public actor ComRaid {
     try await api.optIn(subscriptionId: subscriptionId, credential: credential, channel: "push")
   }
 
+  // MARK: In-app messages
+
+  /// Opt this Contact out of In-app messages (the `in_app` channel, independent of push).
+  /// Cached messages stop showing immediately.
+  public func optOutInApp() async throws {
+    let api = try requireAPI()
+    let (subscriptionId, credential) = try requireSubscription()
+    try await api.optOut(subscriptionId: subscriptionId, credential: credential, channel: "in_app")
+    await inApp?.clearLocalState()
+  }
+
+  /// Opt this Contact back in to In-app messages.
+  public func optInInApp() async throws {
+    let api = try requireAPI()
+    let (subscriptionId, credential) = try requireSubscription()
+    try await api.optIn(subscriptionId: subscriptionId, credential: credential, channel: "in_app")
+    startInAppFetch() // messages the Contact was held back from may be eligible again
+  }
+
+  /// Draw In-app messages yourself. While a presenter is set the SDK draws nothing: you receive the
+  /// message and a handle, and report `impression()`, `clicked(buttonId:)` and `dismissed()`.
+  /// Pass nil to go back to the SDK's layouts. May be called before `configure`.
+  public func setInAppMessagePresenter(_ presenter: InAppMessagePresenter?) async {
+    inAppPresenter = presenter
+    await inApp?.setPresenter(presenter)
+  }
+
+  /// Observe In-app messages being displayed, clicked and dismissed.
+  public func addInAppMessageListener(_ listener: any InAppMessageListener) async -> ComRaidListenerToken {
+    let token = ComRaidListenerToken()
+    inAppListeners[token] = listener
+    _ = await inApp?.addListener(listener, token: token)
+    return token
+  }
+
+  public func removeInAppMessageListener(_ token: ComRaidListenerToken) async {
+    inAppListeners[token] = nil
+    await inApp?.removeListener(token)
+  }
+
+  /// Set a local trigger. Triggers stay on the device and are passed to your presenter; they do not
+  /// decide which message shows.
+  public func addTrigger(key: String, value: String) async {
+    inAppTriggers[key] = value
+    await inApp?.addTrigger(key: key, value: value)
+  }
+
+  public func addTriggers(_ triggers: [String: String]) async {
+    inAppTriggers.merge(triggers) { _, new in new }
+    await inApp?.addTriggers(triggers)
+  }
+
+  public func removeTrigger(key: String) async {
+    inAppTriggers[key] = nil
+    await inApp?.removeTrigger(key: key)
+  }
+
+  public func clearTriggers() async {
+    inAppTriggers.removeAll()
+    await inApp?.clearTriggers()
+  }
+
+  public func getTriggers() -> [String: String] { inAppTriggers }
+
+  /// Pause or resume showing In-app messages on this device. Messages wait while paused.
+  public func setInAppMessagesPaused(_ paused: Bool) async {
+    inAppPaused = paused
+    await inApp?.setPaused(paused)
+  }
+
+  public func isInAppMessagesPaused() -> Bool { inAppPaused }
+
+  private func makeInAppManager(
+    api: MobileApiClient,
+    store: any SubscriptionCredentialStore,
+    queue: AckQueue,
+    stateStore: any AckQueueStore,
+    stateKey: String,
+    clock: @escaping @Sendable () -> Date,
+    display: any InAppDisplay,
+    flush: @escaping @Sendable () async -> Void
+  ) -> InAppMessageManager {
+    InAppMessageManager(
+      fetcher: {
+        guard let id = store.subscriptionId, !id.isEmpty, let credential = store.credential, !credential.isEmpty else {
+          throw ComRaidError.notReady
+        }
+        return try await api.listInAppMessages(subscriptionId: id, credential: credential)
+      },
+      acks: AckQueueInAppSink(
+        queue: queue,
+        clock: { Int64(Date().timeIntervalSince1970 * 1000) },
+        flush: flush
+      ),
+      store: stateStore,
+      stateKey: stateKey,
+      clock: clock,
+      display: display,
+      presenter: inAppPresenter,
+      paused: inAppPaused,
+      listeners: inAppListeners,
+      triggers: inAppTriggers
+    )
+  }
+
   public func capabilities() async -> ComRaidCapabilities {
     // Extract Sendable fields in the notification-center callback so UNNotificationSettings
     // (non-Sendable) never crosses isolation under Swift 6.
@@ -749,6 +935,17 @@ public actor ComRaid {
     return subscriptionStore
   }
 
+  /// The Subscription to report under, or nil while the SDK is not registered or the Contact is not
+  /// logged in: the server refuses activity tokens from anonymous Subscriptions.
+  func activityReadiness() -> ActivityReadiness? {
+    guard let store = subscriptionStore,
+          let subscriptionId = store.subscriptionId, !subscriptionId.isEmpty,
+          let credential = store.credential, !credential.isEmpty,
+          let externalUserId, !externalUserId.isEmpty
+    else { return nil }
+    return ActivityReadiness(subscriptionId: subscriptionId, credential: credential)
+  }
+
   private func requireSubscription() throws -> (String, String) {
     let store = try requireSubscriptionStore()
     guard let subscriptionId = store.subscriptionId, !subscriptionId.isEmpty,
@@ -787,11 +984,38 @@ public actor ComRaid {
     #endif
   }
 
+  private func hasRegisteredSubscription() -> Bool {
+    guard let store = subscriptionStore,
+          let id = store.subscriptionId, !id.isEmpty,
+          let credential = store.credential, !credential.isEmpty else { return false }
+    return true
+  }
+
+  /// Fetch and show In-app messages without making the caller wait for the network.
+  private func startInAppFetch() {
+    guard let manager = inApp else { return }
+    inAppFetchTask = Task { await manager.onForeground() }
+  }
+
   private func handleDidEnterBackground() {
     sessionTracker.onBackground()
+    needsInAppForegroundFetch = true
   }
 
   private func onAppForeground() async {
+    await activityTracker?.scheduleFlush()
+    // In-app messages are fetched on every real foreground, independent of the session debounce below,
+    // and in their own task so a slow network never delays recording the session.
+    if needsInAppForegroundFetch {
+      // Without a Subscription there is nothing to fetch yet: keep the flag so the next active
+      // moment, or the registration itself, does it instead of losing this foreground.
+      if hasRegisteredSubscription() {
+        needsInAppForegroundFetch = false
+        startInAppFetch()
+      }
+    } else {
+      await inApp?.onHostReady() // active again: a message that was waiting for a window can show now
+    }
     guard sessionTracker.shouldRecordSession() else { return }
     guard let api,
           let store = subscriptionStore,
@@ -823,4 +1047,11 @@ private final class InMemoryAckQueueStoreForTests: AckQueueStore, @unchecked Sen
   func set(_ key: String, value: String) {
     lock.withLock { map[key] = value }
   }
+}
+
+/// A display with no window: messages wait. Used by tests that do not inject a display.
+@MainActor
+private final class NoWindowInAppDisplay: InAppDisplay {
+  func isAvailable() -> Bool { false }
+  func show(_ message: InAppMessage, handle: any InAppMessageHandle) -> Bool { false }
 }
