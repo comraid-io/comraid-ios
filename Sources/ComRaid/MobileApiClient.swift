@@ -98,6 +98,67 @@ struct MobileApiClient: Sendable {
     try requireSuccess(response, expected: [200])
   }
 
+  /// Register or rotate Apple's update token for a Live activity
+  /// (`PUT /mobile/subscriptions/{id}/activities/{activity_id}/token`).
+  func registerActivityToken(
+    subscriptionId: String,
+    credential: String,
+    activityId: String,
+    activityType: String,
+    updateToken: String
+  ) async throws {
+    let response = try await put(
+      path: activityPath(subscriptionId: subscriptionId, activityId: activityId, suffix: "token"),
+      payload: [
+        "subscription_credential": credential,
+        "activity_type": activityType,
+        "update_token": updateToken,
+      ]
+    )
+    try requireActivitySuccess(response, expected: [200], notFoundIsFinal: false)
+  }
+
+  /// Report a Live activity is over on this device
+  /// (`POST /mobile/subscriptions/{id}/activities/{activity_id}/ended`).
+  func reportActivityEnded(
+    subscriptionId: String,
+    credential: String,
+    activityId: String,
+    reason: String
+  ) async throws {
+    let response = try await post(
+      path: activityPath(subscriptionId: subscriptionId, activityId: activityId, suffix: "ended"),
+      payload: ["subscription_credential": credential, "reason": reason]
+    )
+    try requireActivitySuccess(response, expected: [204], notFoundIsFinal: true)
+  }
+
+  private func activityPath(subscriptionId: String, activityId: String, suffix: String) -> String {
+    var allowed = CharacterSet.urlPathAllowed
+    allowed.remove(charactersIn: "/")
+    let id = activityId.addingPercentEncoding(withAllowedCharacters: allowed) ?? activityId
+    return "/mobile/subscriptions/\(subscriptionId)/activities/\(id)/\(suffix)"
+  }
+
+  /// Like `requireSuccess`, but sorts a failure by what to do about it: never retry (`rejected`),
+  /// keep it for later without retrying now (`refused`, a credential or Subscription problem that
+  /// login or register may fix), or retry (`failed`).
+  private func requireActivitySuccess(_ response: HttpResponse, expected: Set<Int>, notFoundIsFinal: Bool) throws {
+    if expected.contains(response.statusCode) { return }
+    let status = response.statusCode
+    switch status {
+    case 400, 409, 410, 422:
+      throw ActivityRequestError.rejected(status)
+    case 404:
+      // On a token request, 404 means the Subscription is unknown, which a fresh register can fix.
+      throw notFoundIsFinal ? ActivityRequestError.rejected(status) : ActivityRequestError.refused(status)
+    case 401, 403:
+      throw ActivityRequestError.refused(status)
+    default:
+      throw ActivityRequestError.failed(status)
+    }
+  }
+
   func session(
     subscriptionId: String,
     credential: String,
@@ -149,6 +210,25 @@ struct MobileApiClient: Sendable {
     }
   }
 
+  /// In-app messages this install may show now (GET /mobile/subscriptions/{id}/in-app-messages).
+  /// The server decides eligibility (Segment, window, opt-out, already seen). The Subscription
+  /// credential travels in a header because this is a GET.
+  func listInAppMessages(subscriptionId: String, credential: String) async throws -> [FetchedInAppMessage] {
+    let response = try await transport.execute(
+      HttpRequest(
+        method: "GET",
+        path: "/mobile/subscriptions/\(subscriptionId)/in-app-messages",
+        headers: [
+          "X-ComRaid-App-Id": appId,
+          "X-ComRaid-Subscription-Credential": credential,
+        ],
+        body: nil
+      )
+    )
+    try requireSuccess(response, expected: [200])
+    return parseInAppMessages(try jsonObject(response.body)["messages"])
+  }
+
   private func post(path: String, payload: [String: Any]) async throws -> HttpResponse {
     try await execute(method: "POST", path: path, payload: payload)
   }
@@ -191,4 +271,15 @@ struct MobileApiClient: Sendable {
     }
     return value
   }
+}
+
+/// Outcome of a Live activity request that did not succeed.
+enum ActivityRequestError: Error, Equatable {
+  /// The server refused it for good (for example 409 once the activity is over): retrying will not help.
+  case rejected(Int)
+  /// A credential, Contact or Subscription problem that login or register may fix: keep it pending
+  /// and send it again on the next flush, but do not retry now.
+  case refused(Int)
+  /// A server or rate-limit error that may pass.
+  case failed(Int)
 }

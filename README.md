@@ -423,6 +423,63 @@ Flushes any durable ACK backlog.
 
 **Returns:** `Void`
 
+### Live activities
+
+Live activities put one thing on the lock screen and in the Dynamic Island that changes for hours: a delivery, a ride, a score. Your app defines the Live Activity (its `ActivityAttributes` and Widget Extension) and starts it with Apple's API. ComRaid keeps your backend able to update it: the SDK sends Apple's per-activity update token to ComRaid, and your server then updates or ends the activity through the ComRaid API (`POST /activities/{activity_id}/updates`).
+
+Requirements: iOS 16.2 or later (the SDK still supports iOS 15; these methods are gated with `@available(iOS 16.2, *)`), `NSSupportsLiveActivities` set to `YES` in your app's `Info.plist`, a Widget Extension that draws the activity, and the activity started with `pushType: .token`. The Contact must be logged in: ComRaid refuses activity tokens from anonymous Subscriptions, so the SDK waits and sends the token once they are.
+
+```swift
+let activity = try Activity.request(
+  attributes: DeliveryAttributes(orderId: "order_8392"),
+  content: .init(state: .init(status: "preparing"), staleDate: nil),
+  pushType: .token
+)
+await ComRaid.shared.trackActivity(activity, id: "order_8392", type: "delivery")
+```
+
+#### `trackActivity(_:id:type:)`
+
+```swift
+@available(iOS 16.2, *)
+func trackActivity<Attributes: ActivityAttributes>(_ activity: Activity<Attributes>, id: String, type: String) async
+```
+
+Tell ComRaid about a Live activity you just started. `id` is your own activity id, the same one you use in the ComRaid API; use letters, digits and `. _ : -` (up to 128 characters). `type` names the kind of activity, for example `"delivery"`. The SDK sends the update token and every rotation (the newest token wins), retries network errors a few times, and reports when the activity ends or the user dismisses it. Tracking the same id again replaces the earlier tracking.
+
+#### `trackRunningActivities(of:type:id:)`
+
+```swift
+@available(iOS 16.2, *)
+func trackRunningActivities<Attributes: ActivityAttributes>(
+  of attributes: Attributes.Type, type: String, id: @Sendable (Activity<Attributes>) -> String
+) async
+```
+
+Re-attach to the activities still running when your app launches. Activities outlive your process, and the SDK cannot list `Activity<Attributes>` for types it does not know, so call this once at launch for each of your attribute types:
+
+```swift
+await ComRaid.shared.trackRunningActivities(of: DeliveryAttributes.self, type: "delivery") {
+  $0.attributes.orderId
+}
+```
+
+#### `endActivity(id:)`
+
+```swift
+func endActivity(id: String) async -> Bool
+```
+
+End a tracked Live activity now and remove it from the lock screen. Returns `false` for an id that is not tracked. ComRaid is told it ended.
+
+#### `trackedActivities()`
+
+```swift
+func trackedActivities() async -> [ComRaidTrackedActivity]
+```
+
+The activities the SDK is tracking in this process, as `ComRaidTrackedActivity(id:type:)`, sorted by id.
+
 ### Local schedules
 
 ```swift
@@ -614,6 +671,126 @@ final class NotificationService: UNNotificationServiceExtension {
 
 `ComRaid` is extension-safe: `requestPermission`, `requestAuthorization` and the bridge's `requestNotificationPermission` are unavailable in app extensions, and nothing else in the module needs `UIApplication`. Images are downloaded over http(s) with a 10 s timeout and a 5 MB cap (JPEG, PNG, GIF, HEIC); on failure the original content is shown. ObjC hosts can call `ComraidBridge.shared.enrichNotificationRequest(_:storageSuiteName:completion:)`.
 
+### In-app messages
+
+In-app messages are shown inside your app: a modal, a banner at the top or bottom, or a full-screen layout, with up to two buttons. They need no notification permission. The SDK fetches eligible messages each time the app comes to the foreground from the background (and at launch), shows at most one per foreground once a window is available, and reports impressions, clicks and dismissals for you. Each Contact sees a message once. You can opt a Contact out separately from push.
+
+You route deep links yourself: when a button is tapped the SDK reports the click and closes the message, and your listener receives the button (including its `deepLink`). The SDK never opens a link. To draw the message yourself, set a presenter. The default layouts need a UIKit window scene; apps without scenes can use a presenter.
+
+```swift
+final class Router: InAppMessageListener {
+  func didClick(_ message: InAppMessage, button: InAppButton) {
+    if let link = button.deepLink { open(link) }
+  }
+}
+let token = await ComRaid.shared.addInAppMessageListener(router)
+```
+
+#### `setInAppMessagePresenter(_:)`
+
+```swift
+func setInAppMessagePresenter(_ presenter: InAppMessagePresenter?) async
+// typealias InAppMessagePresenter = @MainActor @Sendable (InAppMessage, any InAppMessageHandle, [String: String]) -> Void
+```
+
+Draw In-app messages yourself. While a presenter is set the SDK draws nothing: it calls your closure with the message, a handle and the current triggers, and you report what happened through the handle. Pass `nil` to return to the SDK layouts. May be called before `configure`.
+
+| Handle method | Meaning |
+|---------------|---------|
+| `impression()` | The message is on screen. Recorded once. |
+| `clicked(buttonId:)` | The user tapped that button. Unknown ids are ignored. |
+| `dismissed()` | The user closed it. Recorded once. If a button was tapped first, the click is the outcome: listeners still see the message close, but no dismissal is recorded. |
+
+A Dashboard Test send reaches the presenter too (`message.isTest`); the handle makes no ACKs for it.
+
+#### `addInAppMessageListener(_:)`
+
+```swift
+func addInAppMessageListener(_ listener: any InAppMessageListener) async -> ComRaidListenerToken
+```
+
+Observe `willDisplay`, `didDisplay`, `willDismiss`, `didDismiss` and `didClick(_:button:)`. A listener only observes: it cannot change or suppress a message. Every method has a no-op default. The SDK keeps a strong reference until you remove it.
+
+#### `removeInAppMessageListener(_:)`
+
+```swift
+func removeInAppMessageListener(_ token: ComRaidListenerToken) async
+```
+
+Stop observing.
+
+#### `addTrigger(key:value:)`
+
+```swift
+func addTrigger(key: String, value: String) async
+```
+
+Set a local trigger. Triggers stay on the device and are passed to your presenter. They do not yet decide which message is shown: ComRaid messages carry no trigger rules.
+
+#### `addTriggers(_:)`
+
+```swift
+func addTriggers(_ triggers: [String: String]) async
+```
+
+Set several triggers at once.
+
+#### `removeTrigger(key:)`
+
+```swift
+func removeTrigger(key: String) async
+```
+
+Remove one trigger.
+
+#### `clearTriggers()`
+
+```swift
+func clearTriggers() async
+```
+
+Remove all triggers.
+
+#### `getTriggers()`
+
+```swift
+func getTriggers() -> [String: String]
+```
+
+The triggers currently set.
+
+#### `setInAppMessagesPaused(_:)`
+
+```swift
+func setInAppMessagesPaused(_ paused: Bool) async
+```
+
+Pause or resume showing In-app messages on this device. A message waits while paused and shows after you resume.
+
+#### `isInAppMessagesPaused()`
+
+```swift
+func isInAppMessagesPaused() -> Bool
+```
+
+Whether showing is paused.
+
+#### `optOutInApp()`
+
+```swift
+func optOutInApp() async throws
+```
+
+Opt this Contact out of In-app messages. This is the `in_app` channel and is independent of push `optOut()`. Cached messages stop showing at once.
+
+#### `optInInApp()`
+
+```swift
+func optInInApp() async throws
+```
+
+Opt this Contact back in.
+
 ### Models
 
 | Type | Role |
@@ -628,6 +805,10 @@ final class NotificationService: UNNotificationServiceExtension {
 | `ComRaidScheduleRequest` | Local schedule (`notification` + `triggerDate`) |
 | `ComRaidCapabilities` / `ComRaidAuthorizationStatus` | Permission snapshot from `capabilities()` |
 | `ComRaidTimer` | Timer state (`running` / `paused` / `cancelled` / `completed`) |
+| `InAppMessage` | An In-app message: `id`, `layout`, `title`, `body`, `imageURL`, `buttons`, display window (`startAt`, `endAt`) and `isTest` |
+| `InAppButton` | `id`, `label` and optional `deepLink` (your app routes it) |
+| `InAppLayout` | `.modal`, `.bannerTop`, `.bannerBottom`, `.fullscreen` |
+| `InAppMessageHandle` / `InAppMessagePresenter` / `InAppMessageListener` | Report outcomes, draw messages yourself, observe messages |
 
 ## Errors
 
@@ -648,7 +829,7 @@ Public `ComRaidError` cases:
 
 ## Objective-C bridge
 
-`ComRaidObjCBridge` (`@objc(ComraidBridge)`) exposes the mobile host surface for React Native / ObjC: configure (including `displayForegroundNotifications`), APNs token, `onPushTokenRefresh`, permission (default or explicit option strings), register, login/logout, opt-in/out, capabilities, schedule/cancel/pendingSchedules, `startTimer` / `pauseTimer` / `resumeTimer` / `cancelTimer` / `timers`, `setDeviceProperties`, Attributes, ACK helpers, `getToken`, `getInitialNotification`, `presentNotification`, `enrichNotificationRequest` (Notification Service Extension), receive event emitter, and remote handle/presentation helpers.
+`ComRaidObjCBridge` (`@objc(ComraidBridge)`) exposes the mobile host surface for React Native / ObjC: configure (including `displayForegroundNotifications`), APNs token, `onPushTokenRefresh`, permission (default or explicit option strings), register, login/logout, opt-in/out, capabilities, schedule/cancel/pendingSchedules, `startTimer` / `pauseTimer` / `resumeTimer` / `cancelTimer` / `timers`, `setDeviceProperties`, Attributes, ACK helpers, `listActivities` / `endActivity` (Live activities), `getToken`, `getInitialNotification`, `presentNotification`, `enrichNotificationRequest` (Notification Service Extension), receive event emitter, and remote handle/presentation helpers.
 
 Direct `RemoteNotificationDisplay` builders stay Swift-only. Prefer the Swift `ComRaid` actor when possible.
 

@@ -19,6 +19,10 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
   private var openedToken: ComRaidListenerToken?
   private var tokenRefreshToken: ComRaidListenerToken?
   private let listenerLock = NSLock()
+  private var inAppListenerToken: ComRaidListenerToken?
+  private var inAppAttachTask: Task<Void, Never>?
+  /// Handles of messages a JS presenter was asked to draw, keyed by message id until dismissed.
+  private var inAppHandles: [String: any InAppMessageHandle] = [:]
 
   @objc public func configure(
     appId: String,
@@ -94,7 +98,28 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
     listenerLock.withLock { eventEmitter = emitter }
     if emitter != nil {
       attachReceiveListenersIfNeeded()
+      attachInAppListenerIfNeeded()
     }
+  }
+
+  /// Test seam: clear everything this bridge holds, so tests do not leak into each other.
+  func resetForTests() {
+    listenerLock.withLock {
+      eventEmitter = nil
+      foregroundToken = nil
+      backgroundToken = nil
+      openedToken = nil
+      tokenRefreshToken = nil
+      inAppListenerToken = nil
+      inAppAttachTask = nil
+      inAppHandles = [:]
+    }
+  }
+
+  /// Test seam: wait until the In-app listener is registered with the SDK.
+  func settleForTests() async {
+    let task = listenerLock.withLock { inAppAttachTask }
+    await task?.value
   }
 
   @objc public func getToken(
@@ -422,6 +447,202 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
     }
   }
 
+  // MARK: In-app messages
+
+  @objc(addTriggerWithKey:value:completion:)
+  public func addTrigger(key: String, value: String, completion: @escaping @Sendable (NSError?) -> Void) {
+    Task {
+      await ComRaid.shared.addTrigger(key: key, value: value)
+      completion(nil)
+    }
+  }
+
+  @objc(addTriggersWithJson:completion:)
+  public func addTriggers(json: String, completion: @escaping @Sendable (NSError?) -> Void) {
+    guard let data = json.data(using: .utf8),
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let triggers = object as? [String: String]
+    else {
+      completion(NSError(
+        domain: "Comraid", code: 2002,
+        userInfo: [NSLocalizedDescriptionKey: "Triggers must encode a JSON object of strings"]
+      ))
+      return
+    }
+    Task {
+      await ComRaid.shared.addTriggers(triggers)
+      completion(nil)
+    }
+  }
+
+  @objc(removeTriggerWithKey:completion:)
+  public func removeTrigger(key: String, completion: @escaping @Sendable (NSError?) -> Void) {
+    Task {
+      await ComRaid.shared.removeTrigger(key: key)
+      completion(nil)
+    }
+  }
+
+  @objc(clearTriggersWithCompletion:)
+  public func clearTriggers(completion: @escaping @Sendable (NSError?) -> Void) {
+    Task {
+      await ComRaid.shared.clearTriggers()
+      completion(nil)
+    }
+  }
+
+  @objc(getTriggersWithCompletion:)
+  public func getTriggers(completion: @escaping @Sendable (NSDictionary?, NSError?) -> Void) {
+    Task {
+      let triggers: [String: String] = await ComRaid.shared.getTriggers()
+      completion(triggers as NSDictionary, nil)
+    }
+  }
+
+  @objc(setInAppMessagesPaused:completion:)
+  public func setInAppMessagesPaused(_ paused: Bool, completion: @escaping @Sendable (NSError?) -> Void) {
+    Task {
+      await ComRaid.shared.setInAppMessagesPaused(paused)
+      completion(nil)
+    }
+  }
+
+  @objc(isInAppMessagesPausedWithCompletion:)
+  public func isInAppMessagesPaused(completion: @escaping @Sendable (Bool, NSError?) -> Void) {
+    Task {
+      completion(await ComRaid.shared.isInAppMessagesPaused(), nil)
+    }
+  }
+
+  @objc(optOutInAppWithCompletion:)
+  public func optOutInApp(completion: @escaping @Sendable (NSError?) -> Void) {
+    Task {
+      do {
+        try await ComRaid.shared.optOutInApp()
+        completion(nil)
+      } catch {
+        completion(error as NSError)
+      }
+    }
+  }
+
+  @objc(optInInAppWithCompletion:)
+  public func optInInApp(completion: @escaping @Sendable (NSError?) -> Void) {
+    Task {
+      do {
+        try await ComRaid.shared.optInInApp()
+        completion(nil)
+      } catch {
+        completion(error as NSError)
+      }
+    }
+  }
+
+  /// When enabled the SDK draws nothing itself: each message is emitted as `comraid_in_app_present`
+  /// and the host reports outcomes back by message id.
+  @objc(setInAppMessagePresenterEnabled:completion:)
+  public func setInAppMessagePresenterEnabled(_ enabled: Bool, completion: @escaping @Sendable (NSError?) -> Void) {
+    Task {
+      if enabled {
+        await ComRaid.shared.setInAppMessagePresenter { [weak self] message, handle, triggers in
+          self?.presentInApp(message, handle, triggers)
+        }
+      } else {
+        await ComRaid.shared.setInAppMessagePresenter(nil)
+        listenerLock.withLock { inAppHandles = [:] }
+      }
+      completion(nil)
+    }
+  }
+
+  @objc(inAppImpressionWithMessageId:completion:)
+  public func inAppImpression(messageId: String, completion: @escaping @Sendable (NSError?) -> Void) {
+    reportInApp(messageId, forget: false, completion) { $0.impression() }
+  }
+
+  @objc(inAppClickedWithMessageId:buttonId:completion:)
+  public func inAppClicked(messageId: String, buttonId: String, completion: @escaping @Sendable (NSError?) -> Void) {
+    reportInApp(messageId, forget: false, completion) { $0.clicked(buttonId: buttonId) }
+  }
+
+  @objc(inAppDismissedWithMessageId:completion:)
+  public func inAppDismissed(messageId: String, completion: @escaping @Sendable (NSError?) -> Void) {
+    reportInApp(messageId, forget: true, completion) { $0.dismissed() }
+  }
+
+  /// Apply an outcome to the handle for `messageId`. An unknown id (already dismissed, or never
+  /// presented) is a harmless no-op, not an error.
+  private func reportInApp(
+    _ messageId: String,
+    forget: Bool,
+    _ completion: @escaping @Sendable (NSError?) -> Void,
+    _ apply: @escaping @Sendable (any InAppMessageHandle) -> Void
+  ) {
+    let handle = listenerLock.withLock { () -> (any InAppMessageHandle)? in
+      let found = inAppHandles[messageId]
+      if forget { inAppHandles[messageId] = nil }
+      return found
+    }
+    guard let handle else {
+      completion(nil)
+      return
+    }
+    Task {
+      apply(handle)
+      await (handle as? InAppOutcomeHandle)?.settle()
+      completion(nil)
+    }
+  }
+
+  private func presentInApp(_ message: InAppMessage, _ handle: any InAppMessageHandle, _ triggers: [String: String]) {
+    listenerLock.withLock { inAppHandles[message.id] = handle }
+    emit("comraid_in_app_present", [
+      "message": Self.inAppMessageDictionary(message),
+      "triggers": triggers as NSDictionary,
+    ])
+  }
+
+  private func attachInAppListenerIfNeeded() {
+    let needsAttach = listenerLock.withLock { () -> Bool in
+      guard inAppListenerToken == nil, inAppAttachTask == nil else { return false }
+      return true
+    }
+    guard needsAttach else { return }
+    let task = Task { [weak self] in
+      guard let bridge = self else { return }
+      let listener = BridgeInAppListener { [weak bridge] type, message, button in
+        var payload: [String: Any] = ["type": type, "message": Self.inAppMessageDictionary(message)]
+        if let button { payload["button"] = Self.inAppButtonDictionary(button) }
+        bridge?.emit("comraid_in_app_lifecycle", payload as NSDictionary)
+      }
+      let token = await ComRaid.shared.addInAppMessageListener(listener)
+      bridge.listenerLock.withLock { bridge.inAppListenerToken = token }
+    }
+    listenerLock.withLock { inAppAttachTask = task }
+  }
+
+  private static func inAppButtonDictionary(_ button: InAppButton) -> NSDictionary {
+    var out: [String: Any] = ["id": button.id, "label": button.label]
+    if let deepLink = button.deepLink { out["deepLink"] = deepLink }
+    return out as NSDictionary
+  }
+
+  /// The wire shape the React Native layer parses. Window instants are epoch milliseconds.
+  private static func inAppMessageDictionary(_ message: InAppMessage) -> NSDictionary {
+    var out: [String: Any] = [
+      "id": message.id,
+      "layout": message.layout.rawValue,
+      "title": message.title,
+      "body": message.body,
+      "buttons": message.buttons.map { inAppButtonDictionary($0) },
+      "isTest": message.isTest,
+    ]
+    if let imageURL = message.imageURL { out["imageUrl"] = imageURL }
+    if let startAt = message.startAt { out["startAt"] = startAt.timeIntervalSince1970 * 1000 }
+    if let endAt = message.endAt { out["endAt"] = endAt.timeIntervalSince1970 * 1000 }
+    return out as NSDictionary
+  }
+
   @objc public func capabilities(
     completion: @escaping @Sendable (NSDictionary?, NSError?) -> Void
   ) {
@@ -716,6 +937,28 @@ public final class ComRaidObjCBridge: NSObject, @unchecked Sendable {
     }
   }
 
+  /// Live activities the SDK is tracking, as `[{id, type}]` (React Native `listActivities`).
+  @objc public func listActivities(
+    completion: @escaping @Sendable (NSArray?, NSError?) -> Void
+  ) {
+    Task {
+      let items = await ComRaid.shared.trackedActivities().map {
+        ["id": $0.id, "type": $0.type] as NSDictionary
+      }
+      completion(items as NSArray, nil)
+    }
+  }
+
+  /// End a tracked Live activity (React Native `endActivity`). False for an unknown id.
+  @objc public func endActivity(
+    id: String,
+    completion: @escaping @Sendable (Bool, NSError?) -> Void
+  ) {
+    Task {
+      completion(await ComRaid.shared.endActivity(id: id), nil)
+    }
+  }
+
   @objc public func flushAcks(completion: @escaping @Sendable (NSError?) -> Void) {
     Task {
       await ComRaid.shared.flushAcks()
@@ -820,4 +1063,19 @@ extension ComRaidObjCBridge {
     }
     return ""
   }
+}
+
+/// Forwards In-app message lifecycle steps to the bridge's event emitter.
+private final class BridgeInAppListener: InAppMessageListener, @unchecked Sendable {
+  private let forward: @Sendable (String, InAppMessage, InAppButton?) -> Void
+
+  init(_ forward: @escaping @Sendable (String, InAppMessage, InAppButton?) -> Void) {
+    self.forward = forward
+  }
+
+  func willDisplay(_ message: InAppMessage) { forward("willDisplay", message, nil) }
+  func didDisplay(_ message: InAppMessage) { forward("didDisplay", message, nil) }
+  func willDismiss(_ message: InAppMessage) { forward("willDismiss", message, nil) }
+  func didDismiss(_ message: InAppMessage) { forward("didDismiss", message, nil) }
+  func didClick(_ message: InAppMessage, button: InAppButton) { forward("didClick", message, button) }
 }
